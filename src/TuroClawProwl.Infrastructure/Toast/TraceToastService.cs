@@ -5,9 +5,9 @@ using TuroClawProwl.Domain;
 
 namespace TuroClawProwl.Infrastructure.Toast;
 
-// Placeholder pending the DD-2 spike verifying the unpackaged-desktop
-// toast path on .NET 10. Swap in CommunityToolkit.WinUI.Notifications (or
-// Windows App SDK fallback) once that decision is made.
+// Placeholder. DD-2 amendment: swap for Microsoft.Toolkit.Uwp.Notifications
+// (archived but functional on .NET 10) during the Presentation step, when
+// AUMID registration and the Start Menu shortcut are in place.
 public sealed class TraceToastService : IToastService
 {
     public Task NotifyGatewayTransitionAsync(
