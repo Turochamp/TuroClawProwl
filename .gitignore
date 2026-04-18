@@ -1,0 +1,28 @@
+## .NET build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+.vs/
+
+## Test output
+TestResults/
+coverage.*
+
+## IDE
+.idea/
+.vscode/
+*.swp
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Publish output
+publish/
+
+## Rider
+_ReSharper*/
+*.DotSettings.user
