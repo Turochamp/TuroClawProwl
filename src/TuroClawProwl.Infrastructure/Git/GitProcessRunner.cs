@@ -41,6 +41,21 @@ public sealed class GitProcessRunner : IGitRunner
         return new RepoInfo(status.StdOut, unpushedCount, hasUpstream);
     }
 
+    public async Task<string> GetFilePorcelainAsync(
+        string repoPath,
+        string relativePath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(repoPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(relativePath);
+
+        var result = await ProcessRunner.RunAsync(
+            _gitExecutable, new[] { "status", "--porcelain", "--", relativePath },
+            repoPath, cancellationToken).ConfigureAwait(false);
+
+        return result.ExitCode == 0 ? result.StdOut : string.Empty;
+    }
+
     public async Task<GitPushResult> PushAsync(string repoPath, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoPath);

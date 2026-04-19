@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TuroClawProwl.Application;
-using TuroClawProwl.Application.Ports;
 using TuroClawProwl.Application.UseCases;
 using TuroClawProwl.Domain;
 
@@ -9,60 +8,64 @@ namespace TuroClawProwl.App;
 
 public sealed class AppOrchestrator : IDisposable
 {
+    private static readonly TimeSpan TodayStatusInterval = TimeSpan.FromSeconds(30);
+
     private readonly TuroClawProwlConfig _config;
     private readonly HandleHealthPollUseCase _healthUseCase;
-    private readonly ReconcileRepoStatesUseCase _reconcileUseCase;
-    private readonly PushUnpushedReposUseCase _pushUseCase;
+    private readonly ResolveTodayFileStatusesUseCase _resolveTodayUseCase;
+    private readonly PushTodayFilesUseCase _pushUseCase;
     private readonly OpenTuiUseCase _openTuiUseCase;
     private readonly RestartGatewayUseCase _restartUseCase;
-    private readonly IRepoWatcher _watcher;
+    private readonly IReadOnlyList<(string AbsolutePath, string RepoPath)> _trackedFiles;
     private readonly ILogger<AppOrchestrator> _logger;
 
     private readonly System.Windows.Forms.Timer _pollTimer = new();
-    private IReadOnlyDictionary<string, RepoStateSnapshot> _lastStates = new Dictionary<string, RepoStateSnapshot>();
-    private int _reconcileInFlight;
+    private readonly System.Windows.Forms.Timer _todayTimer = new();
+    private IReadOnlyList<TodayFileStatus> _lastStatuses = Array.Empty<TodayFileStatus>();
+    private int _resolveInFlight;
 
     public AppOrchestrator(
         TuroClawProwlConfig config,
         HandleHealthPollUseCase healthUseCase,
-        ReconcileRepoStatesUseCase reconcileUseCase,
-        PushUnpushedReposUseCase pushUseCase,
+        ResolveTodayFileStatusesUseCase resolveTodayUseCase,
+        PushTodayFilesUseCase pushUseCase,
         OpenTuiUseCase openTuiUseCase,
         RestartGatewayUseCase restartUseCase,
-        IRepoWatcher watcher,
+        IReadOnlyList<(string AbsolutePath, string RepoPath)> trackedFiles,
         ILogger<AppOrchestrator>? logger = null)
     {
         _config = config;
         _healthUseCase = healthUseCase;
-        _reconcileUseCase = reconcileUseCase;
+        _resolveTodayUseCase = resolveTodayUseCase;
         _pushUseCase = pushUseCase;
         _openTuiUseCase = openTuiUseCase;
         _restartUseCase = restartUseCase;
-        _watcher = watcher;
+        _trackedFiles = trackedFiles;
         _logger = logger ?? NullLogger<AppOrchestrator>.Instance;
 
         _pollTimer.Interval = Math.Max(1000, (int)_config.PollInterval.TotalMilliseconds);
         _pollTimer.Tick += async (_, _) => await PollHealthOnceAsync();
+
+        _todayTimer.Interval = (int)TodayStatusInterval.TotalMilliseconds;
+        _todayTimer.Tick += async (_, _) => await ResolveTodayStatusesAsync();
     }
 
-    public async Task StartAsync(CancellationToken cancellationToken = default)
+    public async Task StartAsync()
     {
         await PollHealthOnceAsync();
         _pollTimer.Start();
 
-        if (!string.IsNullOrWhiteSpace(_config.ReposRoot) && Directory.Exists(_config.ReposRoot))
+        if (_trackedFiles.Count > 0)
         {
-            _watcher.Changed += async (_, _) => await ReconcileRepoStatesAsync();
-            _watcher.Start(_config.ReposRoot);
-            await ReconcileRepoStatesAsync();
+            await ResolveTodayStatusesAsync();
+            _todayTimer.Start();
         }
     }
 
-    public async Task PushUnpushedAsync()
+    public async Task PushTodayFilesAsync()
     {
-        var states = _lastStates.ToDictionary(kv => kv.Key, kv => kv.Value.ToRepoState());
-        await _pushUseCase.ExecuteAsync(states);
-        await ReconcileRepoStatesAsync();
+        await _pushUseCase.ExecuteAsync(_lastStatuses);
+        await ResolveTodayStatusesAsync();
     }
 
     public Task OpenTuiAsync() => _openTuiUseCase.ExecuteAsync();
@@ -75,29 +78,22 @@ public sealed class AppOrchestrator : IDisposable
         catch (Exception ex) { _logger.LogWarning(ex, "Health poll threw"); }
     }
 
-    private async Task ReconcileRepoStatesAsync()
+    private async Task ResolveTodayStatusesAsync()
     {
-        if (Interlocked.Exchange(ref _reconcileInFlight, 1) == 1) return;
+        if (Interlocked.Exchange(ref _resolveInFlight, 1) == 1) return;
         try
         {
-            var states = await _reconcileUseCase.ExecuteAsync(_config.ReposRoot);
-            _lastStates = states.ToDictionary(
-                kv => kv.Key,
-                kv => new RepoStateSnapshot(kv.Value.UnpushedCount, kv.Value.HasUncommitted, kv.Value.HasUpstream));
+            _lastStatuses = await _resolveTodayUseCase.ExecuteAsync(_trackedFiles);
         }
-        catch (Exception ex) { _logger.LogWarning(ex, "Reconcile threw"); }
-        finally { Interlocked.Exchange(ref _reconcileInFlight, 0); }
+        catch (Exception ex) { _logger.LogWarning(ex, "Today file status resolve threw"); }
+        finally { Interlocked.Exchange(ref _resolveInFlight, 0); }
     }
 
     public void Dispose()
     {
         _pollTimer.Stop();
         _pollTimer.Dispose();
-        _watcher.Dispose();
-    }
-
-    private sealed record RepoStateSnapshot(int UnpushedCount, bool HasUncommitted, bool HasUpstream)
-    {
-        public RepoState ToRepoState() => new(UnpushedCount, HasUncommitted, HasUpstream);
+        _todayTimer.Stop();
+        _todayTimer.Dispose();
     }
 }

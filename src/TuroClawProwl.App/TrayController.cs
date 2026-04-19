@@ -15,9 +15,9 @@ public sealed class TrayController : ITrayView, IDisposable
     private readonly ToolStripMenuItem _exitItem;
 
     private GatewayHealth _gateway = new GatewayHealth.NeverReached();
-    private IReadOnlyDictionary<string, RepoState> _repos = new Dictionary<string, RepoState>();
+    private IReadOnlyCollection<TodayFileStatus> _todayFiles = Array.Empty<TodayFileStatus>();
 
-    public event EventHandler? PushUnpushedRequested;
+    public event EventHandler? PushTodayFilesRequested;
     public event EventHandler? OpenTuiRequested;
     public event EventHandler? RestartGatewayRequested;
     public event EventHandler? OpenSettingsRequested;
@@ -28,8 +28,8 @@ public sealed class TrayController : ITrayView, IDisposable
         ArgumentNullException.ThrowIfNull(dispatcher);
         _dispatcher = dispatcher;
 
-        _pushItem = new ToolStripMenuItem("Push unpushed repos");
-        _pushItem.Click += (_, _) => PushUnpushedRequested?.Invoke(this, EventArgs.Empty);
+        _pushItem = new ToolStripMenuItem("Push Today files");
+        _pushItem.Click += (_, _) => PushTodayFilesRequested?.Invoke(this, EventArgs.Empty);
         _pushItem.Enabled = false;
 
         _openTuiItem = new ToolStripMenuItem("Open TUI");
@@ -87,28 +87,28 @@ public sealed class TrayController : ITrayView, IDisposable
         }, cancellationToken);
     }
 
-    public Task SetRepoStatesAsync(
-        IReadOnlyDictionary<string, RepoState> states,
+    public Task SetTodayFileStatusesAsync(
+        IReadOnlyCollection<TodayFileStatus> statuses,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(states);
+        ArgumentNullException.ThrowIfNull(statuses);
         return _dispatcher.PostAsync(() =>
         {
-            _repos = states;
+            _todayFiles = statuses;
             Refresh();
         }, cancellationToken);
     }
 
     private void Refresh()
     {
-        var color = TrayColorResolver.Resolve(_gateway, _repos.Values.ToArray());
-        var tooltip = TooltipComposer.Compose(_gateway, _repos.Values.ToArray());
+        var color = TrayColorResolver.Resolve(_gateway, _todayFiles);
+        var tooltip = TooltipComposer.Compose(_gateway, _todayFiles);
 
         _notifyIcon.Icon?.Dispose();
         _notifyIcon.Icon = TrayIconFactory.ForColor(color);
         _notifyIcon.Text = tooltip.Length > 127 ? tooltip[..127] : tooltip;
 
-        _pushItem.Enabled = _repos.Values.Any(r => r.UnpushedCount > 0);
+        _pushItem.Enabled = _todayFiles.Any(f => f.IsUnpushed);
     }
 
     public void Dispose()

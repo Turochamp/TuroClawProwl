@@ -5,11 +5,12 @@ namespace TuroClawProwl.Domain;
 public static class TooltipComposer
 {
     public const string LineSeparator = "\n";
+    private const int MaxPendingListed = 3;
 
-    public static string Compose(GatewayHealth gateway, IReadOnlyCollection<RepoState> repos)
+    public static string Compose(GatewayHealth gateway, IReadOnlyCollection<TodayFileStatus> todayFiles)
     {
         ArgumentNullException.ThrowIfNull(gateway);
-        ArgumentNullException.ThrowIfNull(repos);
+        ArgumentNullException.ThrowIfNull(todayFiles);
 
         var gatewayLine = gateway switch
         {
@@ -23,15 +24,34 @@ public static class TooltipComposer
                 nameof(gateway)),
         };
 
-        var total = repos.Count;
-        var unpushed = repos.Count(r => r.UnpushedCount > 0);
-        var uncommitted = repos.Count(r => r.HasUncommitted);
-        var noUpstream = repos.Count(r => !r.HasUpstream);
-        var clean = repos.Count(r => r.IsClean);
+        var total = todayFiles.Count;
+        var synced = todayFiles.Count(f => f.IsSynced);
+        var todayLine = total == 0
+            ? "Today repo files: not configured"
+            : synced == total
+                ? $"Today repo files: {synced}/{total} synced"
+                : ComposePendingSummary(todayFiles, synced, total);
 
-        var reposLine =
-            $"Repos: {total} ({clean} clean, {unpushed} unpushed, {uncommitted} uncommitted, {noUpstream} no upstream)";
+        return gatewayLine + LineSeparator + todayLine;
+    }
 
-        return gatewayLine + LineSeparator + reposLine;
+    private static string ComposePendingSummary(
+        IReadOnlyCollection<TodayFileStatus> files,
+        int synced,
+        int total)
+    {
+        var pending = files.Where(f => f.NeedsAttention).ToArray();
+        var pendingNames = pending.Take(MaxPendingListed).Select(DescribePending);
+        var suffix = pending.Length > MaxPendingListed ? $", +{pending.Length - MaxPendingListed} more" : "";
+        return $"Today repo files: {synced}/{total} synced \u2014 pending: {string.Join(", ", pendingNames)}{suffix}";
+    }
+
+    private static string DescribePending(TodayFileStatus file)
+    {
+        var relative = Path.GetFileName(file.Path);
+        var reasons = new List<string>();
+        if (file.HasUncommitted) reasons.Add("uncommitted");
+        if (file.IsUnpushed) reasons.Add("unpushed");
+        return reasons.Count == 0 ? relative : $"{relative} ({string.Join("+", reasons)})";
     }
 }
