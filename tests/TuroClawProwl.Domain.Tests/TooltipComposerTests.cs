@@ -5,11 +5,8 @@ namespace TuroClawProwl.Domain.Tests;
 
 public class TooltipComposerTests
 {
-    private static readonly string Repo = @"C:\repo";
-    private static readonly TodayFileStatus Synced = new(@"C:\repo\a.md", Repo, false, false);
-    private static readonly TodayFileStatus Uncommitted = new(@"C:\repo\dirty.md", Repo, true, false);
-    private static readonly TodayFileStatus Unpushed = new(@"C:\repo\ahead.md", Repo, false, true);
-    private static readonly TodayFileStatus Both = new(@"C:\repo\both.md", Repo, true, true);
+    private static TodayFileStatus File(string repoName, string fileName, bool uncommitted, bool unpushed) =>
+        new($@"C:\Git\{repoName}\{fileName}", $@"C:\Git\{repoName}", uncommitted, unpushed);
 
     private static readonly DateTimeOffset FixedNow = new(2026, 4, 18, 12, 0, 0, TimeSpan.Zero);
 
@@ -47,7 +44,7 @@ public class TooltipComposerTests
     public void Tooltip_shows_not_configured_when_today_file_list_is_empty()
     {
         var tip = TooltipComposer.Compose(new GatewayHealth.NeverReached(), Array.Empty<TodayFileStatus>());
-        tip.Should().Contain("Today repo files: not configured");
+        tip.Should().Contain("Today: not configured");
     }
 
     [Fact]
@@ -55,42 +52,97 @@ public class TooltipComposerTests
     {
         var tip = TooltipComposer.Compose(
             new GatewayHealth.Healthy(FixedNow, null),
-            new[] { Synced, Synced, Synced });
-        tip.Should().Contain("Today repo files: 3/3 synced");
-        tip.Should().NotContain("pending");
+            new[] { File("a", "STATE.md", false, false), File("b", "STATE.md", false, false) });
+        tip.Should().Contain("Today: 2/2 synced");
+        tip.Should().NotContain("uncommitted");
+        tip.Should().NotContain("unpushed");
     }
 
     [Fact]
-    public void Tooltip_lists_pending_files_with_reasons_when_some_are_not_synced()
+    public void Tooltip_lists_uncommitted_repos_by_name()
     {
         var tip = TooltipComposer.Compose(
             new GatewayHealth.Healthy(FixedNow, null),
-            new[] { Synced, Uncommitted, Unpushed });
+            new[]
+            {
+                File("CCA-AgentBrew", "STATE.md", uncommitted: true, unpushed: false),
+                File("CCA-CareerOps", "STATE.md", uncommitted: true, unpushed: false),
+                File("CCA-HomeBase", "STATE.md", uncommitted: false, unpushed: false),
+            });
 
-        tip.Should().Contain("Today repo files: 1/3 synced");
-        tip.Should().Contain("pending:");
-        tip.Should().Contain("dirty.md (uncommitted)");
-        tip.Should().Contain("ahead.md (unpushed)");
+        tip.Should().Contain("Today: 1/3 synced");
+        tip.Should().Contain("uncommitted: CCA-AgentBrew, CCA-CareerOps");
+        tip.Should().NotContain("unpushed:");
     }
 
     [Fact]
-    public void Tooltip_lists_combined_reasons_for_files_that_are_both_uncommitted_and_unpushed()
+    public void Tooltip_lists_unpushed_repos_under_unpushed_bucket_when_no_uncommitted_files()
     {
-        var tip = TooltipComposer.Compose(new GatewayHealth.Healthy(FixedNow, null), new[] { Both });
-        tip.Should().Contain("both.md (uncommitted+unpushed)");
+        var tip = TooltipComposer.Compose(
+            new GatewayHealth.Healthy(FixedNow, null),
+            new[]
+            {
+                File("CCA-AgentBrew", "STATE.md", uncommitted: false, unpushed: true),
+                File("CCA-CareerOps", "STATE.md", uncommitted: false, unpushed: false),
+            });
+
+        tip.Should().Contain("Today: 1/2 synced");
+        tip.Should().Contain("unpushed: CCA-AgentBrew");
+        tip.Should().NotContain("uncommitted:");
     }
 
     [Fact]
-    public void Tooltip_caps_pending_list_and_summarises_the_rest_with_a_more_counter()
+    public void Repo_with_both_problems_is_classified_as_uncommitted_only_and_not_duplicated()
+    {
+        var tip = TooltipComposer.Compose(
+            new GatewayHealth.Healthy(FixedNow, null),
+            new[] { File("CCA-AgentBrew", "STATE.md", uncommitted: true, unpushed: true) });
+
+        tip.Should().Contain("uncommitted: CCA-AgentBrew");
+        tip.Should().NotContain("unpushed:");
+    }
+
+    [Fact]
+    public void Tooltip_deduplicates_repo_names_when_multiple_files_live_in_the_same_repo()
+    {
+        var tip = TooltipComposer.Compose(
+            new GatewayHealth.Healthy(FixedNow, null),
+            new[]
+            {
+                File("CCA-AgentBrew", "STATE.md", uncommitted: true, unpushed: false),
+                File("CCA-AgentBrew", "OTHER.md", uncommitted: true, unpushed: false),
+            });
+
+        var occurrences = System.Text.RegularExpressions.Regex.Matches(tip, "CCA-AgentBrew").Count;
+        occurrences.Should().Be(1);
+    }
+
+    [Fact]
+    public void Tooltip_mixes_uncommitted_and_unpushed_buckets_separated_by_em_dash()
+    {
+        var tip = TooltipComposer.Compose(
+            new GatewayHealth.Healthy(FixedNow, null),
+            new[]
+            {
+                File("CCA-AgentBrew", "STATE.md", uncommitted: true, unpushed: false),
+                File("CCA-HomeBase", "STATE.md", uncommitted: false, unpushed: true),
+            });
+
+        tip.Should().Contain("uncommitted: CCA-AgentBrew");
+        tip.Should().Contain("unpushed: CCA-HomeBase");
+    }
+
+    [Fact]
+    public void Tooltip_caps_repo_list_per_bucket_and_emits_more_counter_when_overflowing()
     {
         var files = Enumerable.Range(0, 7)
-            .Select(i => new TodayFileStatus($@"C:\repo\{i}.md", Repo, true, false))
+            .Select(i => File($"repo-{i}", "STATE.md", uncommitted: true, unpushed: false))
             .ToArray();
 
         var tip = TooltipComposer.Compose(new GatewayHealth.Healthy(FixedNow, null), files);
 
-        tip.Should().Contain("Today repo files: 0/7 synced");
-        tip.Should().Contain("+4 more", "3 pending are listed and the rest are counted");
+        tip.Should().Contain("Today: 0/7 synced");
+        tip.Should().Contain("+3 more", "4 repos are listed and the rest are counted");
     }
 
     [Fact]
