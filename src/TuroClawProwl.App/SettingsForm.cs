@@ -1,27 +1,45 @@
+using System.Drawing;
 using TuroClawProwl.Application;
 using TuroClawProwl.Application.Ports;
+using TuroClawProwl.Infrastructure.Gateway;
+using TuroClawProwl.Infrastructure.Ssh;
 using WinFormsApp = System.Windows.Forms.Application;
 
 namespace TuroClawProwl.App;
 
 public sealed class SettingsForm : Form
 {
+    private static readonly Font DialogFont = new("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
+    private static readonly Size ButtonSize = new(88, 26);
+    private static readonly Color OkColor = Color.FromArgb(16, 124, 16);
+    private static readonly Color ErrColor = Color.FromArgb(196, 43, 28);
+    private static readonly Color MutedColor = Color.FromArgb(96, 96, 96);
+
     private readonly IConfigStore _configStore;
     private readonly ITokenStore _tokenStore;
     private readonly IAutostartManager _autostart;
 
-    private readonly TextBox _gatewayUrl = new() { Width = 320 };
-    private readonly TextBox _token = new() { Width = 320, UseSystemPasswordChar = true };
-    private readonly TextBox _sshHost = new() { Width = 320 };
-    private readonly TextBox _sshUser = new() { Width = 320 };
-    private readonly TextBox _reposRoot = new() { Width = 320 };
-    private readonly NumericUpDown _pollSeconds = new() { Minimum = 5, Maximum = 600, Value = 15, Width = 80 };
-    private readonly CheckBox _autostartEnabled = new() { Text = "Start with Windows" };
-    private readonly TextBox _todaySkillPath = new() { Width = 320 };
-    private readonly TextBox _todayCcaRoot = new() { Width = 320 };
-    private readonly TextBox _todayCrmIndex = new() { Width = 320 };
-    private readonly Button _saveButton = new() { Text = "Save", DialogResult = DialogResult.OK, Width = 90 };
-    private readonly Button _cancelButton = new() { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 90 };
+    // Inputs
+    private readonly TextBox _gatewayUrl = new() { Dock = DockStyle.Fill };
+    private readonly TextBox _token = new() { Dock = DockStyle.Fill, UseSystemPasswordChar = true };
+    private readonly TextBox _sshHost = new() { Dock = DockStyle.Fill };
+    private readonly TextBox _sshUser = new() { Dock = DockStyle.Fill };
+    private readonly TextBox _reposRoot = new() { Dock = DockStyle.Fill };
+    private readonly NumericUpDown _pollSeconds = new() { Minimum = 5, Maximum = 600, Value = 15, Width = 70 };
+    private readonly CheckBox _autostartEnabled = new() { Text = "Start with Windows", AutoSize = true };
+    private readonly TextBox _todaySkillPath = new() { Dock = DockStyle.Fill };
+    private readonly TextBox _todayCcaRoot = new() { Dock = DockStyle.Fill };
+    private readonly TextBox _todayCrmIndex = new() { Dock = DockStyle.Fill };
+
+    // Test buttons + status labels
+    private readonly Button _testGatewayButton = new() { Text = "Test", Size = new Size(72, 23), UseVisualStyleBackColor = true };
+    private readonly Label _gatewayStatus = new() { AutoSize = true, ForeColor = MutedColor };
+    private readonly Button _testSshButton = new() { Text = "Test", Size = new Size(72, 23), UseVisualStyleBackColor = true };
+    private readonly Label _sshStatus = new() { AutoSize = true, ForeColor = MutedColor };
+
+    // Commit buttons
+    private readonly Button _saveButton = new() { Text = "Save", DialogResult = DialogResult.OK, Size = ButtonSize, UseVisualStyleBackColor = true };
+    private readonly Button _cancelButton = new() { Text = "Cancel", DialogResult = DialogResult.Cancel, Size = ButtonSize, UseVisualStyleBackColor = true };
 
     public SettingsForm(IConfigStore configStore, ITokenStore tokenStore, IAutostartManager autostart)
     {
@@ -34,16 +52,20 @@ public sealed class SettingsForm : Form
         _autostart = autostart;
 
         Text = "TuroClawProwl Settings";
+        Font = DialogFont;
         StartPosition = FormStartPosition.CenterScreen;
-        FormBorderStyle = FormBorderStyle.FixedDialog;
+        FormBorderStyle = FormBorderStyle.Sizable;
         MinimizeBox = false;
         MaximizeBox = false;
-        AutoSize = true;
-        AutoSizeMode = AutoSizeMode.GrowAndShrink;
-        MinimumSize = new Size(480, 360);
+        ShowIcon = false;
+        ShowInTaskbar = true;
+        ClientSize = new Size(540, 600);
+        MinimumSize = new Size(520, 560);
 
         BuildLayout();
 
+        _testGatewayButton.Click += async (_, _) => await OnTestGatewayAsync();
+        _testSshButton.Click += async (_, _) => await OnTestSshAsync();
         _saveButton.Click += async (_, _) => await OnSaveAsync();
 
         Load += async (_, _) => await LoadFromStoresAsync();
@@ -51,59 +73,148 @@ public sealed class SettingsForm : Form
 
     private void BuildLayout()
     {
-        var layout = new TableLayoutPanel
+        var root = new TableLayoutPanel
         {
-            Dock = DockStyle.Top,
-            Padding = new Padding(16),
-            ColumnCount = 2,
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            Padding = new Padding(12, 12, 12, 0),
+        };
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        root.Controls.Add(BuildGatewayGroup(), 0, 0);
+        root.Controls.Add(BuildMonitoringGroup(), 0, 1);
+        root.Controls.Add(BuildTodayGroup(), 0, 2);
+
+        var buttonRow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom,
+            FlowDirection = FlowDirection.RightToLeft,
+            Padding = new Padding(12),
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        buttonRow.Controls.Add(_cancelButton);
+        buttonRow.Controls.Add(_saveButton);
+
+        Controls.Add(root);
+        Controls.Add(buttonRow);
+
+        AcceptButton = _saveButton;
+        CancelButton = _cancelButton;
+    }
+
+    private GroupBox BuildGatewayGroup()
+    {
+        var group = NewGroupBox("Gateway");
+        var grid = NewFieldGrid();
+
+        AddField(grid, "Gateway URL:", _gatewayUrl, _testGatewayButton);
+        AddField(grid, "Token:", _token);
+        AddStatusRow(grid, _gatewayStatus);
+
+        group.Controls.Add(grid);
+        return group;
+    }
+
+    private GroupBox BuildMonitoringGroup()
+    {
+        var group = NewGroupBox("Monitoring");
+        var grid = NewFieldGrid();
+
+        AddField(grid, "SSH host:", _sshHost);
+        AddField(grid, "SSH user:", _sshUser, _testSshButton);
+        AddStatusRow(grid, _sshStatus);
+        AddField(grid, "Repos root:", _reposRoot);
+        AddField(grid, "Poll interval (s):", _pollSeconds);
+        AddCheckBoxRow(grid, _autostartEnabled);
+
+        group.Controls.Add(grid);
+        return group;
+    }
+
+    private GroupBox BuildTodayGroup()
+    {
+        var group = NewGroupBox("Today skill sync");
+        var grid = NewFieldGrid();
+
+        AddField(grid, "SKILL.md:", _todaySkillPath);
+        AddField(grid, "CCA_ROOT:", _todayCcaRoot);
+        AddField(grid, "CRM index:", _todayCrmIndex);
+
+        group.Controls.Add(grid);
+        return group;
+    }
+
+    private static GroupBox NewGroupBox(string title) => new()
+    {
+        Text = title,
+        Dock = DockStyle.Top,
+        AutoSize = true,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        Margin = new Padding(0, 0, 0, 10),
+        Padding = new Padding(10, 8, 10, 10),
+    };
+
+    private static TableLayoutPanel NewFieldGrid()
+    {
+        var grid = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 3,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             GrowStyle = TableLayoutPanelGrowStyle.AddRows,
         };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 340));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        return grid;
+    }
 
-        void AddRow(string label, Control control)
+    private static void AddField(TableLayoutPanel grid, string label, Control control, Control? trailing = null)
+    {
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var row = grid.RowCount++;
+
+        grid.Controls.Add(new Label
         {
-            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            layout.Controls.Add(new Label
-            {
-                Text = label,
-                AutoSize = true,
-                TextAlign = ContentAlignment.MiddleLeft,
-                Dock = DockStyle.Fill,
-                Margin = new Padding(0, 6, 8, 6),
-            });
-            control.Margin = new Padding(0, 4, 0, 4);
-            layout.Controls.Add(control);
-        }
-
-        AddRow("Gateway URL:", _gatewayUrl);
-        AddRow("Token:", _token);
-        AddRow("SSH host:", _sshHost);
-        AddRow("SSH user:", _sshUser);
-        AddRow("Repos root:", _reposRoot);
-        AddRow("Poll interval (s):", _pollSeconds);
-        AddRow("Autostart:", _autostartEnabled);
-        AddRow("Today SKILL.md:", _todaySkillPath);
-        AddRow("Today CCA_ROOT:", _todayCcaRoot);
-        AddRow("Today CRM index:", _todayCrmIndex);
-
-        var buttons = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.RightToLeft,
-            Dock = DockStyle.Top,
-            Padding = new Padding(16, 0, 16, 16),
+            Text = label,
             AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        };
-        buttons.Controls.Add(_cancelButton);
-        buttons.Controls.Add(_saveButton);
+            TextAlign = ContentAlignment.MiddleLeft,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 6, 6, 6),
+        }, 0, row);
 
-        Controls.Add(buttons);
-        Controls.Add(layout);
-        AcceptButton = _saveButton;
-        CancelButton = _cancelButton;
+        control.Margin = new Padding(0, 3, 6, 3);
+        grid.Controls.Add(control, 1, row);
+
+        if (trailing is not null)
+        {
+            trailing.Margin = new Padding(0, 2, 0, 2);
+            grid.Controls.Add(trailing, 2, row);
+        }
+    }
+
+    private static void AddStatusRow(TableLayoutPanel grid, Label status)
+    {
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var row = grid.RowCount++;
+        status.Margin = new Padding(0, 0, 0, 6);
+        grid.Controls.Add(status, 1, row);
+        grid.SetColumnSpan(status, 2);
+    }
+
+    private static void AddCheckBoxRow(TableLayoutPanel grid, CheckBox check)
+    {
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var row = grid.RowCount++;
+        check.Margin = new Padding(0, 4, 0, 4);
+        grid.Controls.Add(check, 1, row);
+        grid.SetColumnSpan(check, 2);
     }
 
     private async Task LoadFromStoresAsync()
@@ -121,6 +232,87 @@ public sealed class SettingsForm : Form
 
         var token = await _tokenStore.GetTokenAsync();
         _token.Text = token ?? "";
+    }
+
+    private async Task OnTestGatewayAsync()
+    {
+        if (!Uri.TryCreate(_gatewayUrl.Text.Trim(), UriKind.Absolute, out var uri))
+        {
+            SetStatus(_gatewayStatus, "Enter a valid URL first.", isError: true);
+            return;
+        }
+
+        _testGatewayButton.Enabled = false;
+        SetStatus(_gatewayStatus, "Testing...", isError: false, muted: true);
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            var tokenStore = new StaticTokenStore(_token.Text);
+            var client = new HttpGatewayClient(http, tokenStore, uri);
+            var result = await client.GetHealthAsync();
+
+            switch (result)
+            {
+                case GatewayPollResult.Success s:
+                    var suffix = s.Uptime is { } up ? $" (uptime {up})" : "";
+                    SetStatus(_gatewayStatus, "OK - gateway reachable" + suffix, isError: false);
+                    break;
+                case GatewayPollResult.Failure f:
+                    SetStatus(_gatewayStatus, "Failed: " + f.Reason, isError: true);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            SetStatus(_gatewayStatus, "Error: " + ex.Message, isError: true);
+        }
+        finally
+        {
+            _testGatewayButton.Enabled = true;
+        }
+    }
+
+    private async Task OnTestSshAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_sshHost.Text) || string.IsNullOrWhiteSpace(_sshUser.Text))
+        {
+            SetStatus(_sshStatus, "Enter SSH host and user first.", isError: true);
+            return;
+        }
+
+        _testSshButton.Enabled = false;
+        SetStatus(_sshStatus, "Testing...", isError: false, muted: true);
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var runner = new OpenSshRunner();
+            var target = new SshTarget(_sshHost.Text.Trim(), _sshUser.Text.Trim());
+            var result = await runner.RunCommandAsync(target, "echo", new[] { "turoclawprowl-test" }, cts.Token);
+
+            switch (result)
+            {
+                case SshCommandResult.Success:
+                    SetStatus(_sshStatus, "OK - exit 0", isError: false);
+                    break;
+                case SshCommandResult.Failure f:
+                    SetStatus(_sshStatus, $"Failed: exit {f.ExitCode}", isError: true);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            SetStatus(_sshStatus, "Error: " + ex.Message, isError: true);
+        }
+        finally
+        {
+            _testSshButton.Enabled = true;
+        }
+    }
+
+    private static void SetStatus(Label status, string text, bool isError, bool muted = false)
+    {
+        status.Text = text;
+        status.ForeColor = muted ? MutedColor : isError ? ErrColor : OkColor;
     }
 
     private async Task OnSaveAsync()
@@ -156,5 +348,13 @@ public sealed class SettingsForm : Form
             _autostart.Enable(exePath);
         else
             _autostart.Disable();
+    }
+
+    private sealed class StaticTokenStore : ITokenStore
+    {
+        private readonly string? _token;
+        public StaticTokenStore(string? token) => _token = token;
+        public Task<string?> GetTokenAsync(CancellationToken cancellationToken = default) => Task.FromResult(_token);
+        public Task SetTokenAsync(string token, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }
