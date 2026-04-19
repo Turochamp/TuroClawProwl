@@ -5,6 +5,7 @@ using Serilog.Extensions.Logging;
 using TuroClawProwl.Application;
 using TuroClawProwl.Application.Ports;
 using TuroClawProwl.Application.UseCases;
+using TuroClawProwl.Domain;
 using TuroClawProwl.Infrastructure.Autostart;
 using WinFormsApp = System.Windows.Forms.Application;
 using TuroClawProwl.Infrastructure.Configuration;
@@ -89,6 +90,9 @@ internal static class Program
             config, healthUseCase, reconcileUseCase, pushUseCase, openTuiUseCase, restartUseCase, watcher,
             loggerFactory.CreateLogger<AppOrchestrator>());
 
+        using var todaySyncer = BuildTodaySyncer(config, gitRunner, loggerFactory);
+        todaySyncer?.Start();
+
         trayController.PushUnpushedRequested += async (_, _) => await orchestrator.PushUnpushedAsync();
         trayController.OpenTuiRequested += async (_, _) => await orchestrator.OpenTuiAsync();
         trayController.RestartGatewayRequested += async (_, _) => await orchestrator.RestartGatewayAsync();
@@ -118,6 +122,47 @@ internal static class Program
     {
         using var form = new SettingsForm(configStore, tokenStore, autostart);
         form.ShowDialog();
+    }
+
+    private static TodaySyncer? BuildTodaySyncer(
+        TuroClawProwlConfig config,
+        IGitRunner gitRunner,
+        ILoggerFactory loggerFactory)
+    {
+        var logger = loggerFactory.CreateLogger<TodaySyncer>();
+
+        if (string.IsNullOrWhiteSpace(config.TodaySkillPath) ||
+            string.IsNullOrWhiteSpace(config.TodayCcaRoot) ||
+            string.IsNullOrWhiteSpace(config.TodayCrmIndexPath))
+        {
+            logger.LogInformation("Today syncer disabled (one or more Today settings are empty)");
+            return null;
+        }
+
+        if (!File.Exists(config.TodaySkillPath))
+        {
+            logger.LogWarning("Today syncer disabled: SKILL.md not found at {Path}", config.TodaySkillPath);
+            return null;
+        }
+
+        string skillMarkdown;
+        try
+        {
+            skillMarkdown = File.ReadAllText(config.TodaySkillPath);
+        }
+        catch (IOException ex)
+        {
+            logger.LogWarning(ex, "Today syncer disabled: could not read {Path}", config.TodaySkillPath);
+            return null;
+        }
+
+        var trackedPaths = TodaySkillParser.ExtractSyncPaths(
+            skillMarkdown,
+            config.TodaySkillPath,
+            config.TodayCcaRoot,
+            config.TodayCrmIndexPath);
+
+        return new TodaySyncer(trackedPaths, gitRunner, logger);
     }
 
     private static Serilog.Core.Logger ConfigureSerilog()

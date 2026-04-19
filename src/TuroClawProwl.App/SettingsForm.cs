@@ -17,6 +17,9 @@ public sealed class SettingsForm : Form
     private readonly TextBox _reposRoot = new() { Width = 320 };
     private readonly NumericUpDown _pollSeconds = new() { Minimum = 5, Maximum = 600, Value = 15, Width = 80 };
     private readonly CheckBox _autostartEnabled = new() { Text = "Start with Windows" };
+    private readonly TextBox _todaySkillPath = new() { Width = 320 };
+    private readonly TextBox _todayCcaRoot = new() { Width = 320 };
+    private readonly TextBox _todayCrmIndex = new() { Width = 320 };
     private readonly Button _saveButton = new() { Text = "Save", DialogResult = DialogResult.OK, Width = 90 };
     private readonly Button _cancelButton = new() { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 90 };
 
@@ -50,18 +53,28 @@ public sealed class SettingsForm : Form
     {
         var layout = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.Top,
             Padding = new Padding(16),
             ColumnCount = 2,
-            RowCount = 8,
             AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            GrowStyle = TableLayoutPanelGrowStyle.AddRows,
         };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 340));
 
         void AddRow(string label, Control control)
         {
-            layout.Controls.Add(new Label { Text = label, AutoSize = true, TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill });
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.Controls.Add(new Label
+            {
+                Text = label,
+                AutoSize = true,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 6, 8, 6),
+            });
+            control.Margin = new Padding(0, 4, 0, 4);
             layout.Controls.Add(control);
         }
 
@@ -72,19 +85,22 @@ public sealed class SettingsForm : Form
         AddRow("Repos root:", _reposRoot);
         AddRow("Poll interval (s):", _pollSeconds);
         AddRow("Autostart:", _autostartEnabled);
+        AddRow("Today SKILL.md:", _todaySkillPath);
+        AddRow("Today CCA_ROOT:", _todayCcaRoot);
+        AddRow("Today CRM index:", _todayCrmIndex);
 
         var buttons = new FlowLayoutPanel
         {
             FlowDirection = FlowDirection.RightToLeft,
-            Dock = DockStyle.Fill,
-            Padding = new Padding(0, 8, 0, 0),
+            Dock = DockStyle.Top,
+            Padding = new Padding(16, 0, 16, 16),
             AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         buttons.Controls.Add(_cancelButton);
         buttons.Controls.Add(_saveButton);
-        layout.Controls.Add(new Label { AutoSize = true }); // spacer
-        layout.Controls.Add(buttons);
 
+        Controls.Add(buttons);
         Controls.Add(layout);
         AcceptButton = _saveButton;
         CancelButton = _cancelButton;
@@ -99,6 +115,9 @@ public sealed class SettingsForm : Form
         _reposRoot.Text = config.ReposRoot;
         _pollSeconds.Value = Math.Clamp((decimal)config.PollInterval.TotalSeconds, 5, 600);
         _autostartEnabled.Checked = _autostart.IsEnabled();
+        _todaySkillPath.Text = config.TodaySkillPath;
+        _todayCcaRoot.Text = config.TodayCcaRoot;
+        _todayCrmIndex.Text = config.TodayCrmIndexPath;
 
         var token = await _tokenStore.GetTokenAsync();
         _token.Text = token ?? "";
@@ -123,6 +142,9 @@ public sealed class SettingsForm : Form
             ReposRoot = _reposRoot.Text.Trim(),
             PollInterval = TimeSpan.FromSeconds((double)_pollSeconds.Value),
             AutostartEnabled = _autostartEnabled.Checked,
+            TodaySkillPath = _todaySkillPath.Text.Trim(),
+            TodayCcaRoot = _todayCcaRoot.Text.Trim(),
+            TodayCrmIndexPath = _todayCrmIndex.Text.Trim(),
         };
 
         await _configStore.SaveAsync(config);

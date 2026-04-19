@@ -8,4 +8,7 @@ public sealed record TuroClawProwlConfig
     public string ReposRoot { get; init; } = @"C:\Git\ClaudeCodeAssistants";
     public TimeSpan PollInterval { get; init; } = TimeSpan.FromSeconds(15);
     public bool AutostartEnabled { get; init; } = true;
+    public string TodaySkillPath { get; init; } = "";
+    public string TodayCcaRoot { get; init; } = "";
+    public string TodayCrmIndexPath { get; init; } = "";
 }
