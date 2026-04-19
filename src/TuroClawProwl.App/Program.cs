@@ -164,7 +164,6 @@ internal static class Program
 
         return TodaySkillParser.ExtractSyncPaths(
             skillMarkdown,
-            config.TodaySkillPath,
             config.TodayCcaRoot,
             config.TodayCrmIndexPath);
     }

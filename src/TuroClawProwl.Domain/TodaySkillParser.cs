@@ -8,21 +8,19 @@ public static class TodaySkillParser
         @"\{CCA_ROOT\}/([^\s`]+?)(?=[\s`])",
         RegexOptions.Compiled);
 
+    // The SKILL.md file itself is intentionally NOT included. The skill
+    // definition is curated by hand; only the files it references (via
+    // {CCA_ROOT}/... and {CRM_INDEX}) are auto-synced to the remote.
     public static IReadOnlyList<string> ExtractSyncPaths(
         string skillMarkdown,
-        string skillFilePath,
         string ccaRoot,
         string crmIndexPath)
     {
         ArgumentNullException.ThrowIfNull(skillMarkdown);
-        ArgumentException.ThrowIfNullOrWhiteSpace(skillFilePath);
         ArgumentException.ThrowIfNullOrWhiteSpace(ccaRoot);
         ArgumentException.ThrowIfNullOrWhiteSpace(crmIndexPath);
 
-        var paths = new SortedSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            NormalizeSeparators(skillFilePath),
-        };
+        var paths = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (Match match in CcaRootRef.Matches(skillMarkdown))
         {
