@@ -28,7 +28,6 @@ public class JsonConfigStoreTests
             GatewayUrl = "http://fox.local:8080/",
             SshHost = "fox.local",
             SshUser = "turo",
-            ReposRoot = @"C:\Git\Other",
             PollInterval = TimeSpan.FromSeconds(30),
             AutostartEnabled = false,
         };

@@ -24,7 +24,6 @@ public sealed class SettingsForm : Form
     private readonly TextBox _token = new() { Dock = DockStyle.Fill, UseSystemPasswordChar = true };
     private readonly TextBox _sshHost = new() { Dock = DockStyle.Fill };
     private readonly TextBox _sshUser = new() { Dock = DockStyle.Fill };
-    private readonly TextBox _reposRoot = new() { Dock = DockStyle.Fill };
     private readonly NumericUpDown _pollSeconds = new() { Minimum = 5, Maximum = 600, Value = 15, Width = 70 };
     private readonly CheckBox _autostartEnabled = new() { Text = "Start with Windows", AutoSize = true };
     private readonly TextBox _todaySkillPath = new() { Dock = DockStyle.Fill };
@@ -129,7 +128,6 @@ public sealed class SettingsForm : Form
         AddField(grid, "SSH host:", _sshHost);
         AddField(grid, "SSH user:", _sshUser, _testSshButton);
         AddStatusRow(grid, _sshStatus);
-        AddField(grid, "Repos root:", _reposRoot);
         AddField(grid, "Poll interval (s):", _pollSeconds);
         AddCheckBoxRow(grid, _autostartEnabled);
 
@@ -224,7 +222,6 @@ public sealed class SettingsForm : Form
         _gatewayUrl.Text = config.GatewayUrl;
         _sshHost.Text = config.SshHost;
         _sshUser.Text = config.SshUser;
-        _reposRoot.Text = config.ReposRoot;
         _pollSeconds.Value = Math.Clamp((decimal)config.PollInterval.TotalSeconds, 5, 600);
         _autostartEnabled.Checked = _autostart.IsEnabled();
         _todaySkillPath.Text = config.TodaySkillPath;
@@ -332,7 +329,6 @@ public sealed class SettingsForm : Form
             GatewayUrl = _gatewayUrl.Text.Trim(),
             SshHost = _sshHost.Text.Trim(),
             SshUser = _sshUser.Text.Trim(),
-            ReposRoot = _reposRoot.Text.Trim(),
             PollInterval = TimeSpan.FromSeconds((double)_pollSeconds.Value),
             AutostartEnabled = _autostartEnabled.Checked,
             TodaySkillPath = _todaySkillPath.Text.Trim(),
