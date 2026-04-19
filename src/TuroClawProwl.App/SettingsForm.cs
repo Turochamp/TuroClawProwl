@@ -10,8 +10,9 @@ namespace TuroClawProwl.App;
 public sealed class SettingsForm : Form
 {
     private static readonly Font DialogFont = new("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
-    private static readonly Size ButtonSize = new(96, 28);
-    private static readonly Size TestButtonSize = new(80, 26);
+    private static readonly Size CommitButtonMinSize = new(90, 30);
+    private static readonly Size TestButtonMinSize = new(75, 26);
+    private static readonly Padding StandardButtonPadding = new(10, 4, 10, 4);
     private static readonly Color OkColor = Color.FromArgb(16, 124, 16);
     private static readonly Color ErrColor = Color.FromArgb(196, 43, 28);
     private static readonly Color MutedColor = Color.FromArgb(96, 96, 96);
@@ -32,14 +33,48 @@ public sealed class SettingsForm : Form
     private readonly TextBox _todayCrmIndex = new() { Dock = DockStyle.Fill };
 
     // Test buttons + status labels
-    private readonly Button _testGatewayButton = new() { Text = "Test", Size = TestButtonSize, UseVisualStyleBackColor = true };
+    private readonly Button _testGatewayButton = new()
+    {
+        Text = "Test",
+        AutoSize = true,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        MinimumSize = TestButtonMinSize,
+        Padding = StandardButtonPadding,
+        UseVisualStyleBackColor = true,
+    };
     private readonly Label _gatewayStatus = new() { AutoSize = true, ForeColor = MutedColor };
-    private readonly Button _testSshButton = new() { Text = "Test", Size = TestButtonSize, UseVisualStyleBackColor = true };
+    private readonly Button _testSshButton = new()
+    {
+        Text = "Test",
+        AutoSize = true,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        MinimumSize = TestButtonMinSize,
+        Padding = StandardButtonPadding,
+        UseVisualStyleBackColor = true,
+    };
     private readonly Label _sshStatus = new() { AutoSize = true, ForeColor = MutedColor };
 
     // Commit buttons
-    private readonly Button _saveButton = new() { Text = "Save", DialogResult = DialogResult.OK, Size = ButtonSize, UseVisualStyleBackColor = true };
-    private readonly Button _cancelButton = new() { Text = "Cancel", DialogResult = DialogResult.Cancel, Size = ButtonSize, UseVisualStyleBackColor = true };
+    private readonly Button _saveButton = new()
+    {
+        Text = "Save",
+        DialogResult = DialogResult.OK,
+        AutoSize = true,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        MinimumSize = CommitButtonMinSize,
+        Padding = StandardButtonPadding,
+        UseVisualStyleBackColor = true,
+    };
+    private readonly Button _cancelButton = new()
+    {
+        Text = "Cancel",
+        DialogResult = DialogResult.Cancel,
+        AutoSize = true,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        MinimumSize = CommitButtonMinSize,
+        Padding = StandardButtonPadding,
+        UseVisualStyleBackColor = true,
+    };
 
     public SettingsForm(IConfigStore configStore, ITokenStore tokenStore, IAutostartManager autostart)
     {
@@ -60,8 +95,8 @@ public sealed class SettingsForm : Form
         MaximizeBox = false;
         ShowIcon = false;
         ShowInTaskbar = true;
-        ClientSize = new Size(640, 820);
-        MinimumSize = new Size(620, 740);
+        ClientSize = new Size(620, 760);
+        MinimumSize = new Size(600, 700);
 
         BuildLayout();
 
@@ -90,25 +125,26 @@ public sealed class SettingsForm : Form
         root.Controls.Add(BuildMonitoringGroup(), 0, 1);
         root.Controls.Add(BuildTodayGroup(), 0, 2);
 
-        var buttonBar = new Panel
+        var buttonRow = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.RightToLeft,
+            Padding = new Padding(12),
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+        };
+        buttonRow.Controls.Add(_cancelButton);
+        buttonRow.Controls.Add(_saveButton);
+
+        var bottomBar = new Panel
         {
             Dock = DockStyle.Bottom,
-            Height = 60,
+            Height = 56,
         };
-        var buttonFlow = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.RightToLeft,
-            Padding = new Padding(12, 12, 12, 16),
-        };
-        _saveButton.Margin = new Padding(8, 0, 0, 0);
-        _cancelButton.Margin = new Padding(0);
-        buttonFlow.Controls.Add(_cancelButton);
-        buttonFlow.Controls.Add(_saveButton);
-        buttonBar.Controls.Add(buttonFlow);
+        bottomBar.Controls.Add(buttonRow);
 
+        // Dock order matters: Bottom must be added before Fill so Fill resolves above it.
+        Controls.Add(bottomBar);
         Controls.Add(root);
-        Controls.Add(buttonBar);
 
         AcceptButton = _saveButton;
         CancelButton = _cancelButton;
@@ -177,7 +213,7 @@ public sealed class SettingsForm : Form
         };
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
         return grid;
     }
 
