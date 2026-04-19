@@ -16,6 +16,7 @@ public sealed class HandleHealthPollUseCase
         new(GatewayHealthKindComparer.Instance);
 
     private GatewayHealth _current = new GatewayHealth.NeverReached();
+    private bool _hasEverBeenHealthy;
 
     public HandleHealthPollUseCase(
         IGatewayClient client,
@@ -45,12 +46,14 @@ public sealed class HandleHealthPollUseCase
         {
             GatewayPollResult.Success success =>
                 (GatewayHealth)new GatewayHealth.Healthy(now, success.Uptime),
-            GatewayPollResult.Failure =>
-                new GatewayHealth.Unreachable(ResolveLastSeenHealthy(_current)),
+            GatewayPollResult.Failure failure =>
+                NoteFailure(failure, new GatewayHealth.Unreachable(ResolveLastSeenHealthy(_current))),
             _ => throw new ArgumentException(
                 $"Unknown gateway poll result variant: {pollResult.GetType().Name}",
                 nameof(pollResult)),
         };
+
+        if (next is GatewayHealth.Healthy) _hasEverBeenHealthy = true;
 
         var transition = _detector.Observe(next);
         _current = next;
@@ -65,6 +68,13 @@ public sealed class HandleHealthPollUseCase
         }
 
         await _tray.SetGatewayHealthAsync(next, cancellationToken).ConfigureAwait(false);
+        return next;
+    }
+
+    private GatewayHealth NoteFailure(GatewayPollResult.Failure failure, GatewayHealth next)
+    {
+        if (!_hasEverBeenHealthy)
+            _logger.LogWarning("Gateway poll failed during startup: {Reason}", failure.Reason);
         return next;
     }
 
