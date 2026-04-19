@@ -43,6 +43,32 @@ public class FileSystemRepoDiscoveryTests
     }
 
     [Fact]
+    public async Task Root_itself_is_returned_when_it_contains_dot_git()
+    {
+        using var tmp = new TempDirectory();
+        Directory.CreateDirectory(Path.Combine(tmp.Path, ".git"));
+        var discovery = new FileSystemRepoDiscovery();
+
+        var repos = await discovery.DiscoverAsync(tmp.Path);
+
+        repos.Should().ContainSingle().Which.Should().Be(tmp.Path);
+    }
+
+    [Fact]
+    public async Task Root_is_returned_alongside_child_repos_when_both_are_repos()
+    {
+        using var tmp = new TempDirectory();
+        Directory.CreateDirectory(Path.Combine(tmp.Path, ".git"));
+        var childA = tmp.CreateRepoFolder("child-a");
+        var childB = tmp.CreateRepoFolder("child-b");
+        var discovery = new FileSystemRepoDiscovery();
+
+        var repos = await discovery.DiscoverAsync(tmp.Path);
+
+        repos.Should().BeEquivalentTo(new[] { tmp.Path, childA, childB });
+    }
+
+    [Fact]
     public async Task Repos_nested_two_levels_deep_are_not_returned()
     {
         using var tmp = new TempDirectory();

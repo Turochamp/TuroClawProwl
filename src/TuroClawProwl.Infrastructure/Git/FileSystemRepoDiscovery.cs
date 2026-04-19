@@ -12,6 +12,10 @@ public sealed class FileSystemRepoDiscovery : IRepoDiscovery
         if (!Directory.Exists(rootPath))
             return Task.FromResult<IReadOnlyList<string>>(results);
 
+        // S3 amendment: root itself counts as a repo when it contains .git.
+        if (Directory.Exists(Path.Combine(rootPath, ".git")))
+            results.Add(rootPath);
+
         foreach (var child in Directory.EnumerateDirectories(rootPath))
         {
             cancellationToken.ThrowIfCancellationRequested();

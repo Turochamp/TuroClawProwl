@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TuroClawProwl.Application.Ports;
 using TuroClawProwl.Domain;
 
@@ -9,6 +11,7 @@ public sealed class HandleHealthPollUseCase
     private readonly IClock _clock;
     private readonly IToastService _toasts;
     private readonly ITrayView _tray;
+    private readonly ILogger<HandleHealthPollUseCase> _logger;
     private readonly TransitionDetector<GatewayHealth> _detector =
         new(GatewayHealthKindComparer.Instance);
 
@@ -18,7 +21,8 @@ public sealed class HandleHealthPollUseCase
         IGatewayClient client,
         IClock clock,
         IToastService toasts,
-        ITrayView tray)
+        ITrayView tray,
+        ILogger<HandleHealthPollUseCase>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(client);
         ArgumentNullException.ThrowIfNull(clock);
@@ -29,6 +33,7 @@ public sealed class HandleHealthPollUseCase
         _clock = clock;
         _toasts = toasts;
         _tray = tray;
+        _logger = logger ?? NullLogger<HandleHealthPollUseCase>.Instance;
     }
 
     public async Task<GatewayHealth> ExecuteAsync(CancellationToken cancellationToken = default)
@@ -52,6 +57,10 @@ public sealed class HandleHealthPollUseCase
 
         if (transition is not null && transition.From is not GatewayHealth.NeverReached)
         {
+            _logger.LogInformation(
+                "Gateway transition {FromKind} -> {ToKind}",
+                transition.From.GetType().Name,
+                transition.To.GetType().Name);
             await _toasts.NotifyGatewayTransitionAsync(transition, cancellationToken).ConfigureAwait(false);
         }
 

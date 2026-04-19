@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TuroClawProwl.Application.Ports;
 using TuroClawProwl.Domain;
 
@@ -7,14 +9,19 @@ public sealed class PushUnpushedReposUseCase
 {
     private readonly IGitRunner _git;
     private readonly IToastService _toasts;
+    private readonly ILogger<PushUnpushedReposUseCase> _logger;
 
-    public PushUnpushedReposUseCase(IGitRunner git, IToastService toasts)
+    public PushUnpushedReposUseCase(
+        IGitRunner git,
+        IToastService toasts,
+        ILogger<PushUnpushedReposUseCase>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(git);
         ArgumentNullException.ThrowIfNull(toasts);
 
         _git = git;
         _toasts = toasts;
+        _logger = logger ?? NullLogger<PushUnpushedReposUseCase>.Instance;
     }
 
     public async Task<PushSummary> ExecuteAsync(
@@ -42,6 +49,9 @@ public sealed class PushUnpushedReposUseCase
         }
 
         var summary = new PushSummary(outcomes);
+        _logger.LogInformation(
+            "Push summary: {SuccessCount} succeeded, {FailureCount} failed",
+            summary.SuccessCount, summary.FailureCount);
         await _toasts.NotifyPushSummaryAsync(summary, cancellationToken).ConfigureAwait(false);
         return summary;
     }

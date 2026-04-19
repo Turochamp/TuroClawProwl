@@ -7,6 +7,10 @@ using TuroClawProwl.Domain;
 
 namespace TuroClawProwl.Application.Tests.UseCases;
 
+// TODO(QR-R2): fault-injection stress harness -- 500 polls with 30%
+// simulated packet drop, asserting zero unhandled exceptions and
+// correct state oscillation. Deferred from the pilot; revisit if the
+// app shows instability under real gateway flakiness.
 public class HandleHealthPollUseCaseTests
 {
     private static readonly DateTimeOffset T0 =

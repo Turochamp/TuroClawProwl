@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TuroClawProwl.Application.Ports;
 using TuroClawProwl.Domain;
 
@@ -8,8 +10,13 @@ public sealed class ReconcileRepoStatesUseCase
     private readonly IRepoDiscovery _discovery;
     private readonly IGitRunner _git;
     private readonly ITrayView _tray;
+    private readonly ILogger<ReconcileRepoStatesUseCase> _logger;
 
-    public ReconcileRepoStatesUseCase(IRepoDiscovery discovery, IGitRunner git, ITrayView tray)
+    public ReconcileRepoStatesUseCase(
+        IRepoDiscovery discovery,
+        IGitRunner git,
+        ITrayView tray,
+        ILogger<ReconcileRepoStatesUseCase>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(discovery);
         ArgumentNullException.ThrowIfNull(git);
@@ -18,6 +25,7 @@ public sealed class ReconcileRepoStatesUseCase
         _discovery = discovery;
         _git = git;
         _tray = tray;
+        _logger = logger ?? NullLogger<ReconcileRepoStatesUseCase>.Instance;
     }
 
     public async Task<IReadOnlyDictionary<string, RepoState>> ExecuteAsync(
@@ -38,6 +46,8 @@ public sealed class ReconcileRepoStatesUseCase
         }
 
         await _tray.SetRepoStatesAsync(states, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation(
+            "Reconciled {RepoCount} repos under {RootPath}", states.Count, rootPath);
         return states;
     }
 }

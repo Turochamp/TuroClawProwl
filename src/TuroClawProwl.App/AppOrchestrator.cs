@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TuroClawProwl.Application;
 using TuroClawProwl.Application.Ports;
 using TuroClawProwl.Application.UseCases;
@@ -14,6 +16,7 @@ public sealed class AppOrchestrator : IDisposable
     private readonly OpenTuiUseCase _openTuiUseCase;
     private readonly RestartGatewayUseCase _restartUseCase;
     private readonly IRepoWatcher _watcher;
+    private readonly ILogger<AppOrchestrator> _logger;
 
     private readonly System.Windows.Forms.Timer _pollTimer = new();
     private IReadOnlyDictionary<string, RepoStateSnapshot> _lastStates = new Dictionary<string, RepoStateSnapshot>();
@@ -26,7 +29,8 @@ public sealed class AppOrchestrator : IDisposable
         PushUnpushedReposUseCase pushUseCase,
         OpenTuiUseCase openTuiUseCase,
         RestartGatewayUseCase restartUseCase,
-        IRepoWatcher watcher)
+        IRepoWatcher watcher,
+        ILogger<AppOrchestrator>? logger = null)
     {
         _config = config;
         _healthUseCase = healthUseCase;
@@ -35,6 +39,7 @@ public sealed class AppOrchestrator : IDisposable
         _openTuiUseCase = openTuiUseCase;
         _restartUseCase = restartUseCase;
         _watcher = watcher;
+        _logger = logger ?? NullLogger<AppOrchestrator>.Instance;
 
         _pollTimer.Interval = Math.Max(1000, (int)_config.PollInterval.TotalMilliseconds);
         _pollTimer.Tick += async (_, _) => await PollHealthOnceAsync();
@@ -67,7 +72,7 @@ public sealed class AppOrchestrator : IDisposable
     private async Task PollHealthOnceAsync()
     {
         try { await _healthUseCase.ExecuteAsync(); }
-        catch (Exception ex) { System.Diagnostics.Trace.WriteLine($"[orchestrator] poll error: {ex.Message}"); }
+        catch (Exception ex) { _logger.LogWarning(ex, "Health poll threw"); }
     }
 
     private async Task ReconcileRepoStatesAsync()
@@ -80,7 +85,7 @@ public sealed class AppOrchestrator : IDisposable
                 kv => kv.Key,
                 kv => new RepoStateSnapshot(kv.Value.UnpushedCount, kv.Value.HasUncommitted, kv.Value.HasUpstream));
         }
-        catch (Exception ex) { System.Diagnostics.Trace.WriteLine($"[orchestrator] reconcile error: {ex.Message}"); }
+        catch (Exception ex) { _logger.LogWarning(ex, "Reconcile threw"); }
         finally { Interlocked.Exchange(ref _reconcileInFlight, 0); }
     }
 

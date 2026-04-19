@@ -1,3 +1,7 @@
+using Microsoft.Extensions.Logging;
+using Serilog;
+using Serilog.Events;
+using Serilog.Extensions.Logging;
 using TuroClawProwl.Application;
 using TuroClawProwl.Application.Ports;
 using TuroClawProwl.Application.UseCases;
@@ -7,6 +11,7 @@ using TuroClawProwl.Infrastructure.Configuration;
 using TuroClawProwl.Infrastructure.FileSystem;
 using TuroClawProwl.Infrastructure.Gateway;
 using TuroClawProwl.Infrastructure.Git;
+using TuroClawProwl.Infrastructure.Logging;
 using TuroClawProwl.Infrastructure.Security;
 using TuroClawProwl.Infrastructure.Ssh;
 using TuroClawProwl.Infrastructure.Terminal;
@@ -35,6 +40,10 @@ internal static class Program
         }
 
         Directory.CreateDirectory(AppDataDirectory);
+        Directory.CreateDirectory(Path.Combine(AppDataDirectory, "logs"));
+
+        using var serilogLogger = ConfigureSerilog();
+        using var loggerFactory = new SerilogLoggerFactory(serilogLogger, dispose: false);
 
         var configStore = new JsonConfigStore(JsonConfigStore.DefaultConfigPath());
         var config = configStore.LoadAsync().GetAwaiter().GetResult();
@@ -64,14 +73,21 @@ internal static class Program
 
         var sshTarget = new SshTarget(config.SshHost, config.SshUser);
 
-        var healthUseCase = new HandleHealthPollUseCase(gatewayClient, clock, toasts, trayController);
-        var reconcileUseCase = new ReconcileRepoStatesUseCase(discovery, gitRunner, trayController);
-        var pushUseCase = new PushUnpushedReposUseCase(gitRunner, toasts);
+        var healthUseCase = new HandleHealthPollUseCase(
+            gatewayClient, clock, toasts, trayController,
+            loggerFactory.CreateLogger<HandleHealthPollUseCase>());
+        var reconcileUseCase = new ReconcileRepoStatesUseCase(
+            discovery, gitRunner, trayController,
+            loggerFactory.CreateLogger<ReconcileRepoStatesUseCase>());
+        var pushUseCase = new PushUnpushedReposUseCase(
+            gitRunner, toasts,
+            loggerFactory.CreateLogger<PushUnpushedReposUseCase>());
         var openTuiUseCase = new OpenTuiUseCase(sshTarget, terminal);
         var restartUseCase = new RestartGatewayUseCase(sshTarget, sshRunner, toasts);
 
         using var orchestrator = new AppOrchestrator(
-            config, healthUseCase, reconcileUseCase, pushUseCase, openTuiUseCase, restartUseCase, watcher);
+            config, healthUseCase, reconcileUseCase, pushUseCase, openTuiUseCase, restartUseCase, watcher,
+            loggerFactory.CreateLogger<AppOrchestrator>());
 
         trayController.PushUnpushedRequested += async (_, _) => await orchestrator.PushUnpushedAsync();
         trayController.OpenTuiRequested += async (_, _) => await orchestrator.OpenTuiAsync();
@@ -102,6 +118,24 @@ internal static class Program
     {
         using var form = new SettingsForm(configStore, tokenStore, autostart);
         form.ShowDialog();
+    }
+
+    private static Serilog.Core.Logger ConfigureSerilog()
+    {
+#if DEBUG
+        var minLevel = LogEventLevel.Debug;
+#else
+        var minLevel = LogEventLevel.Information;
+#endif
+        return new LoggerConfiguration()
+            .MinimumLevel.Is(minLevel)
+            .Destructure.With(new SensitivePropertyMaskingPolicy())
+            .WriteTo.File(
+                path: Path.Combine(AppDataDirectory, "logs", "prowl-.log"),
+                rollingInterval: RollingInterval.Day,
+                retainedFileCountLimit: 7,
+                outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {SourceContext}: {Message:lj} {Properties:j}{NewLine}{Exception}")
+            .CreateLogger();
     }
 }
 
