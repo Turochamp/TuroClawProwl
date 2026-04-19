@@ -6,6 +6,12 @@ using TuroClawProwl.Infrastructure.Tests.TestSupport;
 
 namespace TuroClawProwl.Infrastructure.Tests.Logging;
 
+// TODO(QR-O1): static-analysis test over all ILogger call sites that
+// rejects interpolated strings as the first argument ("user {$}" ...)
+// so the masking policy can never be bypassed silently. Requires a
+// Roslyn source scan (Microsoft.CodeAnalysis.CSharp). Deferred from
+// the pilot; current defence is the call-site discipline documented in
+// Raw_interpolated_strings_are_left_untouched_by_the_policy below.
 public class SensitivePropertyMaskingPolicyTests
 {
     private const string TokenSeed = "QR-S2-SENTINEL-6f7a9c1d3b8e";
