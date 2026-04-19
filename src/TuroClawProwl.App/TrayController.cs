@@ -108,7 +108,7 @@ public sealed class TrayController : ITrayView, IDisposable
         _notifyIcon.Icon = TrayIconFactory.ForColor(color);
         _notifyIcon.Text = tooltip.Length > 127 ? tooltip[..127] : tooltip;
 
-        _pushItem.Enabled = _todayFiles.Any(f => f.IsUnpushed);
+        _pushItem.Enabled = _todayFiles.Any(f => f.NeedsAttention);
     }
 
     public void Dispose()
