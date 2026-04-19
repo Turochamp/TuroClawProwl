@@ -53,14 +53,15 @@ public sealed class SettingsForm : Form
 
         Text = "TuroClawProwl Settings";
         Font = DialogFont;
+        AutoScaleMode = AutoScaleMode.Dpi;
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.Sizable;
         MinimizeBox = false;
         MaximizeBox = false;
         ShowIcon = false;
         ShowInTaskbar = true;
-        ClientSize = new Size(540, 600);
-        MinimumSize = new Size(520, 560);
+        ClientSize = new Size(620, 760);
+        MinimumSize = new Size(600, 700);
 
         BuildLayout();
 
@@ -138,7 +139,7 @@ public sealed class SettingsForm : Form
 
     private GroupBox BuildTodayGroup()
     {
-        var group = NewGroupBox("Today skill sync");
+        var group = NewGroupBox("Today repo files");
         var grid = NewFieldGrid();
 
         AddField(grid, "SKILL.md:", _todaySkillPath);
@@ -169,9 +170,9 @@ public sealed class SettingsForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             GrowStyle = TableLayoutPanelGrowStyle.AddRows,
         };
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
         return grid;
     }
 
