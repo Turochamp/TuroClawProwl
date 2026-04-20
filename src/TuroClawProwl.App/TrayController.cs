@@ -9,7 +9,6 @@ public sealed class TrayController : ITrayView, IDisposable
     private readonly NotifyIcon _notifyIcon;
     private readonly ContextMenuStrip _menu;
     private readonly ToolStripMenuItem _pushItem;
-    private readonly ToolStripMenuItem _openTuiItem;
     private readonly ToolStripMenuItem _openControlUiItem;
     private readonly ToolStripMenuItem _restartItem;
     private readonly ToolStripMenuItem _settingsItem;
@@ -19,7 +18,6 @@ public sealed class TrayController : ITrayView, IDisposable
     private IReadOnlyCollection<TodayFileStatus> _todayFiles = Array.Empty<TodayFileStatus>();
 
     public event EventHandler? PushTodayFilesRequested;
-    public event EventHandler? OpenTuiRequested;
     public event EventHandler? OpenControlUiRequested;
     public event EventHandler? RestartGatewayRequested;
     public event EventHandler? OpenSettingsRequested;
@@ -33,9 +31,6 @@ public sealed class TrayController : ITrayView, IDisposable
         _pushItem = new ToolStripMenuItem("Push Today files");
         _pushItem.Click += (_, _) => PushTodayFilesRequested?.Invoke(this, EventArgs.Empty);
         _pushItem.Enabled = false;
-
-        _openTuiItem = new ToolStripMenuItem("Open TUI");
-        _openTuiItem.Click += (_, _) => OpenTuiRequested?.Invoke(this, EventArgs.Empty);
 
         _openControlUiItem = new ToolStripMenuItem("Open Control UI");
         _openControlUiItem.Click += (_, _) => OpenControlUiRequested?.Invoke(this, EventArgs.Empty);
@@ -62,7 +57,6 @@ public sealed class TrayController : ITrayView, IDisposable
         _menu.Items.AddRange(new ToolStripItem[]
         {
             _pushItem,
-            _openTuiItem,
             _openControlUiItem,
             _restartItem,
             new ToolStripSeparator(),

@@ -16,7 +16,6 @@ using TuroClawProwl.Infrastructure.Git;
 using TuroClawProwl.Infrastructure.Logging;
 using TuroClawProwl.Infrastructure.Security;
 using TuroClawProwl.Infrastructure.Ssh;
-using TuroClawProwl.Infrastructure.Terminal;
 using TuroClawProwl.Infrastructure.Time;
 using TuroClawProwl.Infrastructure.Toast;
 
@@ -69,7 +68,6 @@ internal static class Program
         var gitRunner = new GitProcessRunner();
         var sshRunner = new OpenSshRunner();
         var browserLauncher = new DefaultBrowserLauncher();
-        var terminal = new WindowsTerminalLauncher();
         var toasts = new ToastNotificationsToastService();
 
         var sshTarget = new SshTarget(config.SshHost, config.SshUser);
@@ -84,7 +82,6 @@ internal static class Program
         var pushUseCase = new PushTodayFilesUseCase(
             gitRunner, toasts,
             loggerFactory.CreateLogger<PushTodayFilesUseCase>());
-        var openTuiUseCase = new OpenTuiUseCase(sshTarget, terminal);
         var openControlUiUseCase = new OpenControlUiUseCase(
             new Uri(config.GatewayUrl), browserLauncher, tokenStore,
             loggerFactory.CreateLogger<OpenControlUiUseCase>());
@@ -97,7 +94,7 @@ internal static class Program
 
         using var orchestrator = new AppOrchestrator(
             config, healthUseCase, resolveTodayUseCase, pushUseCase,
-            openTuiUseCase, openControlUiUseCase, restartUseCase,
+            openControlUiUseCase, restartUseCase,
             trackedForOrchestrator,
             loggerFactory.CreateLogger<AppOrchestrator>());
 
@@ -107,7 +104,6 @@ internal static class Program
         todaySyncer?.Start();
 
         trayController.PushTodayFilesRequested += async (_, _) => await orchestrator.PushTodayFilesAsync();
-        trayController.OpenTuiRequested += async (_, _) => await orchestrator.OpenTuiAsync();
         trayController.OpenControlUiRequested += async (_, _) => await orchestrator.OpenControlUiAsync();
         trayController.RestartGatewayRequested += async (_, _) => await orchestrator.RestartGatewayAsync();
         trayController.OpenSettingsRequested += (_, _) => ShowSettings(configStore, tokenStore, autostart);

@@ -14,7 +14,6 @@ public sealed class AppOrchestrator : IDisposable
     private readonly HandleHealthPollUseCase _healthUseCase;
     private readonly ResolveTodayFileStatusesUseCase _resolveTodayUseCase;
     private readonly PushTodayFilesUseCase _pushUseCase;
-    private readonly OpenTuiUseCase _openTuiUseCase;
     private readonly OpenControlUiUseCase _openControlUiUseCase;
     private readonly RestartGatewayUseCase _restartUseCase;
     private readonly IReadOnlyList<(string AbsolutePath, string RepoPath)> _trackedFiles;
@@ -30,7 +29,6 @@ public sealed class AppOrchestrator : IDisposable
         HandleHealthPollUseCase healthUseCase,
         ResolveTodayFileStatusesUseCase resolveTodayUseCase,
         PushTodayFilesUseCase pushUseCase,
-        OpenTuiUseCase openTuiUseCase,
         OpenControlUiUseCase openControlUiUseCase,
         RestartGatewayUseCase restartUseCase,
         IReadOnlyList<(string AbsolutePath, string RepoPath)> trackedFiles,
@@ -40,7 +38,6 @@ public sealed class AppOrchestrator : IDisposable
         _healthUseCase = healthUseCase;
         _resolveTodayUseCase = resolveTodayUseCase;
         _pushUseCase = pushUseCase;
-        _openTuiUseCase = openTuiUseCase;
         _openControlUiUseCase = openControlUiUseCase;
         _restartUseCase = restartUseCase;
         _trackedFiles = trackedFiles;
@@ -70,8 +67,6 @@ public sealed class AppOrchestrator : IDisposable
         await _pushUseCase.ExecuteAsync(_lastStatuses);
         await ResolveTodayStatusesAsync();
     }
-
-    public Task OpenTuiAsync() => _openTuiUseCase.ExecuteAsync();
 
     public Task OpenControlUiAsync() => _openControlUiUseCase.ExecuteAsync();
 
