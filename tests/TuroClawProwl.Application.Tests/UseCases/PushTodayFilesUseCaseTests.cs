@@ -9,9 +9,9 @@ namespace TuroClawProwl.Application.Tests.UseCases;
 
 public class PushTodayFilesUseCaseTests
 {
-    private const string RepoA = @"C:\Git\CCA\CCA-AgentBrew";
-    private const string RepoB = @"C:\Git\CCA\crm";
-    private const string RepoC = @"C:\Git\CCA\CCA-HomeBase";
+    private const string RepoA = @"C:\Git\sample\repo-a";
+    private const string RepoB = @"C:\Git\sample\repo-b";
+    private const string RepoC = @"C:\Git\sample\repo-c";
 
     private readonly Mock<IGitRunner> _git = new(MockBehavior.Strict);
     private readonly Mock<IToastService> _toasts = new(MockBehavior.Strict);

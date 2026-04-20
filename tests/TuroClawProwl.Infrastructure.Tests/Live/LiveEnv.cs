@@ -7,7 +7,7 @@ namespace TuroClawProwl.Infrastructure.Tests.Live;
 //   TURO_LIVE_GATEWAY_TOKEN - optional bearer token
 //   TURO_LIVE_SSH_HOST      - e.g. macmini.lan
 //   TURO_LIVE_SSH_USER      - e.g. turo
-//   TURO_LIVE_REPO_PATH     - e.g. C:\Git\ClaudeCodeAssistants\some-repo
+//   TURO_LIVE_REPO_PATH     - e.g. C:\Git\sample\repo-a
 internal static class LiveEnv
 {
     public static string? GatewayUrl => Environment.GetEnvironmentVariable("TURO_LIVE_GATEWAY_URL");

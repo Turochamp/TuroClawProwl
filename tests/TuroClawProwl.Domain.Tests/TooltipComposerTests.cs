@@ -65,13 +65,13 @@ public class TooltipComposerTests
             new GatewayHealth.Healthy(FixedNow, null),
             new[]
             {
-                File("CCA-AgentBrew", "STATE.md", uncommitted: true, unpushed: false),
-                File("CCA-CareerOps", "STATE.md", uncommitted: true, unpushed: false),
-                File("CCA-HomeBase", "STATE.md", uncommitted: false, unpushed: false),
+                File("repo-a", "STATE.md", uncommitted: true, unpushed: false),
+                File("repo-b", "STATE.md", uncommitted: true, unpushed: false),
+                File("repo-c", "STATE.md", uncommitted: false, unpushed: false),
             });
 
         tip.Should().Contain("Today: 1/3 synced");
-        tip.Should().Contain("uncommitted: CCA-AgentBrew, CCA-CareerOps");
+        tip.Should().Contain("uncommitted: repo-a, repo-b");
         tip.Should().NotContain("unpushed:");
     }
 
@@ -82,12 +82,12 @@ public class TooltipComposerTests
             new GatewayHealth.Healthy(FixedNow, null),
             new[]
             {
-                File("CCA-AgentBrew", "STATE.md", uncommitted: false, unpushed: true),
-                File("CCA-CareerOps", "STATE.md", uncommitted: false, unpushed: false),
+                File("repo-a", "STATE.md", uncommitted: false, unpushed: true),
+                File("repo-b", "STATE.md", uncommitted: false, unpushed: false),
             });
 
         tip.Should().Contain("Today: 1/2 synced");
-        tip.Should().Contain("unpushed: CCA-AgentBrew");
+        tip.Should().Contain("unpushed: repo-a");
         tip.Should().NotContain("uncommitted:");
     }
 
@@ -96,9 +96,9 @@ public class TooltipComposerTests
     {
         var tip = TooltipComposer.Compose(
             new GatewayHealth.Healthy(FixedNow, null),
-            new[] { File("CCA-AgentBrew", "STATE.md", uncommitted: true, unpushed: true) });
+            new[] { File("repo-a", "STATE.md", uncommitted: true, unpushed: true) });
 
-        tip.Should().Contain("uncommitted: CCA-AgentBrew");
+        tip.Should().Contain("uncommitted: repo-a");
         tip.Should().NotContain("unpushed:");
     }
 
@@ -109,11 +109,11 @@ public class TooltipComposerTests
             new GatewayHealth.Healthy(FixedNow, null),
             new[]
             {
-                File("CCA-AgentBrew", "STATE.md", uncommitted: true, unpushed: false),
-                File("CCA-AgentBrew", "OTHER.md", uncommitted: true, unpushed: false),
+                File("repo-a", "STATE.md", uncommitted: true, unpushed: false),
+                File("repo-a", "OTHER.md", uncommitted: true, unpushed: false),
             });
 
-        var occurrences = System.Text.RegularExpressions.Regex.Matches(tip, "CCA-AgentBrew").Count;
+        var occurrences = System.Text.RegularExpressions.Regex.Matches(tip, "repo-a").Count;
         occurrences.Should().Be(1);
     }
 
@@ -124,12 +124,12 @@ public class TooltipComposerTests
             new GatewayHealth.Healthy(FixedNow, null),
             new[]
             {
-                File("CCA-AgentBrew", "STATE.md", uncommitted: true, unpushed: false),
-                File("CCA-HomeBase", "STATE.md", uncommitted: false, unpushed: true),
+                File("repo-a", "STATE.md", uncommitted: true, unpushed: false),
+                File("repo-c", "STATE.md", uncommitted: false, unpushed: true),
             });
 
-        tip.Should().Contain("uncommitted: CCA-AgentBrew");
-        tip.Should().Contain("unpushed: CCA-HomeBase");
+        tip.Should().Contain("uncommitted: repo-a");
+        tip.Should().Contain("unpushed: repo-c");
     }
 
     [Fact]

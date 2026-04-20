@@ -8,8 +8,8 @@ namespace TuroClawProwl.Application.Tests.UseCases;
 
 public class ResolveTodayFileStatusesUseCaseTests
 {
-    private const string RepoA = @"C:\Git\CCA\CCA-AgentBrew";
-    private const string RepoB = @"C:\Git\CCA\crm";
+    private const string RepoA = @"C:\Git\sample\repo-a";
+    private const string RepoB = @"C:\Git\sample\repo-b";
 
     private readonly Mock<IGitRunner> _git = new(MockBehavior.Strict);
     private readonly Mock<ITrayView> _tray = new(MockBehavior.Strict);
@@ -46,7 +46,7 @@ public class ResolveTodayFileStatusesUseCaseTests
             .ReturnsAsync("");
         var useCase = CreateUseCase();
 
-        var result = await useCase.ExecuteAsync(new[] { (@"C:\Git\CCA\CCA-AgentBrew\STATE.md", RepoA) });
+        var result = await useCase.ExecuteAsync(new[] { (@"C:\Git\sample\repo-a\STATE.md", RepoA) });
 
         result.Should().ContainSingle().Which.IsSynced.Should().BeTrue();
     }
@@ -60,7 +60,7 @@ public class ResolveTodayFileStatusesUseCaseTests
             .ReturnsAsync(" M STATE.md");
         var useCase = CreateUseCase();
 
-        var result = await useCase.ExecuteAsync(new[] { (@"C:\Git\CCA\CCA-AgentBrew\STATE.md", RepoA) });
+        var result = await useCase.ExecuteAsync(new[] { (@"C:\Git\sample\repo-a\STATE.md", RepoA) });
 
         result.Single().HasUncommitted.Should().BeTrue();
         result.Single().IsUnpushed.Should().BeFalse();
@@ -75,7 +75,7 @@ public class ResolveTodayFileStatusesUseCaseTests
             .ReturnsAsync("");
         var useCase = CreateUseCase();
 
-        var result = await useCase.ExecuteAsync(new[] { (@"C:\Git\CCA\CCA-AgentBrew\STATE.md", RepoA) });
+        var result = await useCase.ExecuteAsync(new[] { (@"C:\Git\sample\repo-a\STATE.md", RepoA) });
 
         result.Single().IsUnpushed.Should().BeTrue();
         result.Single().HasUncommitted.Should().BeFalse();
@@ -90,7 +90,7 @@ public class ResolveTodayFileStatusesUseCaseTests
             .ReturnsAsync("");
         var useCase = CreateUseCase();
 
-        var result = await useCase.ExecuteAsync(new[] { (@"C:\Git\CCA\CCA-AgentBrew\STATE.md", RepoA) });
+        var result = await useCase.ExecuteAsync(new[] { (@"C:\Git\sample\repo-a\STATE.md", RepoA) });
 
         result.Single().IsUnpushed.Should().BeTrue();
     }
@@ -106,9 +106,9 @@ public class ResolveTodayFileStatusesUseCaseTests
 
         await useCase.ExecuteAsync(new[]
         {
-            (@"C:\Git\CCA\CCA-AgentBrew\STATE.md", RepoA),
-            (@"C:\Git\CCA\CCA-AgentBrew\NOTES.md", RepoA),
-            (@"C:\Git\CCA\CCA-AgentBrew\TODO.md", RepoA),
+            (@"C:\Git\sample\repo-a\STATE.md", RepoA),
+            (@"C:\Git\sample\repo-a\NOTES.md", RepoA),
+            (@"C:\Git\sample\repo-a\TODO.md", RepoA),
         });
 
         _git.Verify(g => g.GetRepoInfoAsync(RepoA, It.IsAny<CancellationToken>()), Times.Once);
@@ -127,7 +127,7 @@ public class ResolveTodayFileStatusesUseCaseTests
             .Returns(Task.CompletedTask);
         var useCase = CreateUseCase();
 
-        await useCase.ExecuteAsync(new[] { (@"C:\Git\CCA\CCA-AgentBrew\STATE.md", RepoA) }, cts.Token);
+        await useCase.ExecuteAsync(new[] { (@"C:\Git\sample\repo-a\STATE.md", RepoA) }, cts.Token);
 
         _git.Verify(g => g.GetRepoInfoAsync(RepoA, cts.Token), Times.Once);
         _git.Verify(g => g.GetFilePorcelainAsync(RepoA, It.IsAny<string>(), cts.Token), Times.Once);
