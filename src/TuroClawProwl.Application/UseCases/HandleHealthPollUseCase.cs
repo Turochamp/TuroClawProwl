@@ -42,16 +42,24 @@ public sealed class HandleHealthPollUseCase
         var pollResult = await _client.GetHealthAsync(cancellationToken).ConfigureAwait(false);
         var now = _clock.UtcNow;
 
-        var next = pollResult switch
+        GatewayHealth next;
+        string? failureReason = null;
+        switch (pollResult)
         {
-            GatewayPollResult.Success success =>
-                (GatewayHealth)new GatewayHealth.Healthy(now, success.Uptime),
-            GatewayPollResult.Failure failure =>
-                NoteFailure(failure, new GatewayHealth.Unreachable(ResolveLastSeenHealthy(_current))),
-            _ => throw new ArgumentException(
-                $"Unknown gateway poll result variant: {pollResult.GetType().Name}",
-                nameof(pollResult)),
-        };
+            case GatewayPollResult.Success success:
+                next = new GatewayHealth.Healthy(now, success.Uptime);
+                break;
+            case GatewayPollResult.Failure failure:
+                failureReason = failure.Reason;
+                next = new GatewayHealth.Unreachable(ResolveLastSeenHealthy(_current));
+                if (!_hasEverBeenHealthy)
+                    _logger.LogWarning("Gateway poll failed during startup: {Reason}", failureReason);
+                break;
+            default:
+                throw new ArgumentException(
+                    $"Unknown gateway poll result variant: {pollResult.GetType().Name}",
+                    nameof(pollResult));
+        }
 
         if (next is GatewayHealth.Healthy) _hasEverBeenHealthy = true;
 
@@ -60,21 +68,24 @@ public sealed class HandleHealthPollUseCase
 
         if (transition is not null && transition.From is not GatewayHealth.NeverReached)
         {
-            _logger.LogInformation(
-                "Gateway transition {FromKind} -> {ToKind}",
-                transition.From.GetType().Name,
-                transition.To.GetType().Name);
+            if (transition.To is GatewayHealth.Unreachable && failureReason is not null)
+            {
+                _logger.LogInformation(
+                    "Gateway transition {FromKind} -> Unreachable: {Reason}",
+                    transition.From.GetType().Name,
+                    failureReason);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "Gateway transition {FromKind} -> {ToKind}",
+                    transition.From.GetType().Name,
+                    transition.To.GetType().Name);
+            }
             await _toasts.NotifyGatewayTransitionAsync(transition, cancellationToken).ConfigureAwait(false);
         }
 
         await _tray.SetGatewayHealthAsync(next, cancellationToken).ConfigureAwait(false);
-        return next;
-    }
-
-    private GatewayHealth NoteFailure(GatewayPollResult.Failure failure, GatewayHealth next)
-    {
-        if (!_hasEverBeenHealthy)
-            _logger.LogWarning("Gateway poll failed during startup: {Reason}", failure.Reason);
         return next;
     }
 

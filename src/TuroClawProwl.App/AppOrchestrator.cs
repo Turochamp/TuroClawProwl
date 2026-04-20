@@ -23,6 +23,7 @@ public sealed class AppOrchestrator : IDisposable
     private readonly System.Windows.Forms.Timer _todayTimer = new();
     private IReadOnlyList<TodayFileStatus> _lastStatuses = Array.Empty<TodayFileStatus>();
     private int _resolveInFlight;
+    private int _pollInFlight;
 
     public AppOrchestrator(
         TuroClawProwlConfig config,
@@ -74,8 +75,12 @@ public sealed class AppOrchestrator : IDisposable
 
     private async Task PollHealthOnceAsync()
     {
+        // Retries inside HttpGatewayClient can stretch a single poll past PollInterval;
+        // this guard prevents the WinForms timer from stacking concurrent polls.
+        if (Interlocked.Exchange(ref _pollInFlight, 1) == 1) return;
         try { await _healthUseCase.ExecuteAsync(); }
         catch (Exception ex) { _logger.LogWarning(ex, "Health poll threw"); }
+        finally { Interlocked.Exchange(ref _pollInFlight, 0); }
     }
 
     private async Task ResolveTodayStatusesAsync()

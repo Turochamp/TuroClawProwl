@@ -1,5 +1,9 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Polly;
+using Polly.Retry;
 using TuroClawProwl.Application.Ports;
 
 namespace TuroClawProwl.Infrastructure.Gateway;
@@ -9,8 +13,13 @@ public sealed class HttpGatewayClient : IGatewayClient
     private readonly HttpClient _http;
     private readonly ITokenStore _tokenStore;
     private readonly Uri _healthEndpoint;
+    private readonly ResiliencePipeline _pipeline;
 
-    public HttpGatewayClient(HttpClient http, ITokenStore tokenStore, Uri baseAddress)
+    public HttpGatewayClient(
+        HttpClient http,
+        ITokenStore tokenStore,
+        Uri baseAddress,
+        ResiliencePipeline? pipeline = null)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(tokenStore);
@@ -19,23 +28,42 @@ public sealed class HttpGatewayClient : IGatewayClient
         _http = http;
         _tokenStore = tokenStore;
         _healthEndpoint = new Uri(baseAddress, "health");
+        _pipeline = pipeline ?? ResiliencePipeline.Empty;
+    }
+
+    public static ResiliencePipeline BuildDefaultRetryPipeline(ILogger? logger = null)
+    {
+        var log = logger ?? NullLogger.Instance;
+        return new ResiliencePipelineBuilder()
+            .AddRetry(new RetryStrategyOptions
+            {
+                MaxRetryAttempts = 3,
+                Delay = TimeSpan.FromSeconds(2),
+                BackoffType = DelayBackoffType.Exponential,
+                UseJitter = true,
+                ShouldHandle = new PredicateBuilder()
+                    .Handle<HttpRequestException>()
+                    .Handle<TaskCanceledException>(),
+                OnRetry = args =>
+                {
+                    log.LogDebug(
+                        "Health poll transient failure; retry {Attempt} in {Delay}: {Reason}",
+                        args.AttemptNumber + 1,
+                        args.RetryDelay,
+                        args.Outcome.Exception?.Message);
+                    return default;
+                },
+            })
+            .Build();
     }
 
     public async Task<GatewayPollResult> GetHealthAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, _healthEndpoint);
-            var token = await _tokenStore.GetTokenAsync(cancellationToken).ConfigureAwait(false);
-            if (!string.IsNullOrEmpty(token))
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-            using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
-                return new GatewayPollResult.Failure($"HTTP {(int)response.StatusCode}");
-
-            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            return new GatewayPollResult.Success(TryParseUptime(body));
+            return await _pipeline.ExecuteAsync(
+                async ct => await SendOnceAsync(ct).ConfigureAwait(false),
+                cancellationToken).ConfigureAwait(false);
         }
         catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -45,6 +73,21 @@ public sealed class HttpGatewayClient : IGatewayClient
         {
             return new GatewayPollResult.Failure(ex.Message);
         }
+    }
+
+    private async Task<GatewayPollResult> SendOnceAsync(CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, _healthEndpoint);
+        var token = await _tokenStore.GetTokenAsync(cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrEmpty(token))
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            return new GatewayPollResult.Failure($"HTTP {(int)response.StatusCode}");
+
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        return new GatewayPollResult.Success(TryParseUptime(body));
     }
 
     private static TimeSpan? TryParseUptime(string body)

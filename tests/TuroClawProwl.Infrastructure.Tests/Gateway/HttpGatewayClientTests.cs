@@ -1,6 +1,8 @@
 using System.Net;
 using FluentAssertions;
 using Moq;
+using Polly;
+using Polly.Retry;
 using TuroClawProwl.Application.Ports;
 using TuroClawProwl.Infrastructure.Gateway;
 using TuroClawProwl.Infrastructure.Tests.TestSupport;
@@ -20,7 +22,7 @@ public class HttpGatewayClientTests
     }
 
     private HttpGatewayClient CreateClient(FakeHttpMessageHandler handler) =>
-        new(new HttpClient(handler), _tokenStore.Object, BaseAddress);
+        new(new HttpClient(handler), _tokenStore.Object, BaseAddress, ResiliencePipeline.Empty);
 
     private static HttpResponseMessage Json(HttpStatusCode status, string body) =>
         new(status) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
@@ -144,5 +146,99 @@ public class HttpGatewayClientTests
         using var handler = FakeHttpMessageHandler.Responding(_ => new HttpResponseMessage(HttpStatusCode.OK));
         Action act = () => new HttpGatewayClient(new HttpClient(handler), _tokenStore.Object, null!);
         act.Should().Throw<ArgumentNullException>();
+    }
+
+    private static ResiliencePipeline BuildFastRetryPipeline(int maxAttempts = 3) =>
+        new ResiliencePipelineBuilder()
+            .AddRetry(new RetryStrategyOptions
+            {
+                MaxRetryAttempts = maxAttempts,
+                Delay = TimeSpan.Zero,
+                BackoffType = DelayBackoffType.Constant,
+                UseJitter = false,
+                ShouldHandle = new PredicateBuilder()
+                    .Handle<HttpRequestException>()
+                    .Handle<TaskCanceledException>(),
+            })
+            .Build();
+
+    [Fact]
+    public async Task Transient_network_failure_is_retried_and_recovers()
+    {
+        var callCount = 0;
+        var handler = new FakeHttpMessageHandler((_, _) =>
+        {
+            callCount++;
+            if (callCount < 3)
+                throw new HttpRequestException("transient");
+            return Task.FromResult(Json(HttpStatusCode.OK, """{"uptime_seconds":42}"""));
+        });
+        var client = new HttpGatewayClient(
+            new HttpClient(handler), _tokenStore.Object, BaseAddress, BuildFastRetryPipeline());
+
+        var result = await client.GetHealthAsync();
+
+        callCount.Should().Be(3);
+        result.Should().BeOfType<GatewayPollResult.Success>()
+            .Which.Uptime.Should().Be(TimeSpan.FromSeconds(42));
+    }
+
+    [Fact]
+    public async Task All_attempts_failing_yields_failure_with_last_error_message()
+    {
+        var callCount = 0;
+        var handler = new FakeHttpMessageHandler((_, _) =>
+        {
+            callCount++;
+            throw new HttpRequestException($"attempt {callCount}");
+        });
+        var client = new HttpGatewayClient(
+            new HttpClient(handler), _tokenStore.Object, BaseAddress, BuildFastRetryPipeline(maxAttempts: 3));
+
+        var result = await client.GetHealthAsync();
+
+        callCount.Should().Be(4); // initial + 3 retries
+        result.Should().BeOfType<GatewayPollResult.Failure>()
+            .Which.Reason.Should().Contain("attempt 4");
+    }
+
+    [Fact]
+    public async Task Non_2xx_response_is_not_retried()
+    {
+        var callCount = 0;
+        var handler = new FakeHttpMessageHandler((_, _) =>
+        {
+            callCount++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+        });
+        var client = new HttpGatewayClient(
+            new HttpClient(handler), _tokenStore.Object, BaseAddress, BuildFastRetryPipeline());
+
+        var result = await client.GetHealthAsync();
+
+        callCount.Should().Be(1);
+        result.Should().BeOfType<GatewayPollResult.Failure>()
+            .Which.Reason.Should().Contain("401");
+    }
+
+    [Fact]
+    public async Task Cancellation_stops_retry_loop_immediately()
+    {
+        using var cts = new CancellationTokenSource();
+        var callCount = 0;
+        var handler = new FakeHttpMessageHandler((_, ct) =>
+        {
+            callCount++;
+            cts.Cancel();
+            ct.ThrowIfCancellationRequested();
+            throw new HttpRequestException("should not retry after cancel");
+        });
+        var client = new HttpGatewayClient(
+            new HttpClient(handler), _tokenStore.Object, BaseAddress, BuildFastRetryPipeline());
+
+        Func<Task> act = () => client.GetHealthAsync(cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        callCount.Should().Be(1);
     }
 }

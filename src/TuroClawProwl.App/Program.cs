@@ -61,9 +61,11 @@ internal static class Program
 
         var clock = new WallClock();
         var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        var retryPipeline = HttpGatewayClient.BuildDefaultRetryPipeline(
+            loggerFactory.CreateLogger("TuroClawProwl.Infrastructure.Gateway.HttpGatewayClient"));
         IGatewayClient gatewayClient = string.IsNullOrWhiteSpace(config.GatewayUrl)
             ? new NullGatewayClient()
-            : new HttpGatewayClient(httpClient, tokenStore, new Uri(config.GatewayUrl));
+            : new HttpGatewayClient(httpClient, tokenStore, new Uri(config.GatewayUrl), retryPipeline);
 
         var gitRunner = new GitProcessRunner();
         var sshRunner = new OpenSshRunner();
