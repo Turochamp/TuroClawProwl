@@ -8,6 +8,7 @@ using TuroClawProwl.Application.UseCases;
 using TuroClawProwl.Domain;
 using TuroClawProwl.Infrastructure.Autostart;
 using WinFormsApp = System.Windows.Forms.Application;
+using TuroClawProwl.Infrastructure.Browser;
 using TuroClawProwl.Infrastructure.Configuration;
 using TuroClawProwl.Infrastructure.FileSystem;
 using TuroClawProwl.Infrastructure.Gateway;
@@ -67,6 +68,9 @@ internal static class Program
 
         var gitRunner = new GitProcessRunner();
         var sshRunner = new OpenSshRunner();
+        var sshTunnelLauncher = new OpenSshTunnelLauncher(
+            logger: loggerFactory.CreateLogger<OpenSshTunnelLauncher>());
+        var browserLauncher = new DefaultBrowserLauncher();
         var terminal = new WindowsTerminalLauncher();
         var toasts = new ToastNotificationsToastService();
 
@@ -83,6 +87,9 @@ internal static class Program
             gitRunner, toasts,
             loggerFactory.CreateLogger<PushTodayFilesUseCase>());
         var openTuiUseCase = new OpenTuiUseCase(sshTarget, terminal);
+        var openControlUiUseCase = new OpenControlUiUseCase(
+            sshTarget, sshTunnelLauncher, browserLauncher, tokenStore,
+            loggerFactory.CreateLogger<OpenControlUiUseCase>());
         var restartUseCase = new RestartGatewayUseCase(sshTarget, sshRunner, toasts);
 
         var trackedForOrchestrator = trackedPaths
@@ -91,7 +98,8 @@ internal static class Program
             .ToArray();
 
         using var orchestrator = new AppOrchestrator(
-            config, healthUseCase, resolveTodayUseCase, pushUseCase, openTuiUseCase, restartUseCase,
+            config, healthUseCase, resolveTodayUseCase, pushUseCase,
+            openTuiUseCase, openControlUiUseCase, restartUseCase,
             trackedForOrchestrator,
             loggerFactory.CreateLogger<AppOrchestrator>());
 
@@ -102,6 +110,7 @@ internal static class Program
 
         trayController.PushTodayFilesRequested += async (_, _) => await orchestrator.PushTodayFilesAsync();
         trayController.OpenTuiRequested += async (_, _) => await orchestrator.OpenTuiAsync();
+        trayController.OpenControlUiRequested += async (_, _) => await orchestrator.OpenControlUiAsync();
         trayController.RestartGatewayRequested += async (_, _) => await orchestrator.RestartGatewayAsync();
         trayController.OpenSettingsRequested += (_, _) => ShowSettings(configStore, tokenStore, autostart);
         trayController.ExitRequested += (_, _) => WinFormsApp.Exit();

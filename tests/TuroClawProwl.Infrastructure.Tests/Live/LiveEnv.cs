@@ -15,4 +15,22 @@ internal static class LiveEnv
     public static string? SshHost => Environment.GetEnvironmentVariable("TURO_LIVE_SSH_HOST");
     public static string? SshUser => Environment.GetEnvironmentVariable("TURO_LIVE_SSH_USER");
     public static string? LiveRepoPath => Environment.GetEnvironmentVariable("TURO_LIVE_REPO_PATH");
+
+    public static int TunnelLocalPort
+    {
+        get
+        {
+            var raw = Environment.GetEnvironmentVariable("TURO_LIVE_TUNNEL_LOCAL_PORT");
+            return int.TryParse(raw, out var parsed) ? parsed : 28790;
+        }
+    }
+
+    public static int TunnelRemotePort
+    {
+        get
+        {
+            var raw = Environment.GetEnvironmentVariable("TURO_LIVE_TUNNEL_REMOTE_PORT");
+            return int.TryParse(raw, out var parsed) ? parsed : 18789;
+        }
+    }
 }
