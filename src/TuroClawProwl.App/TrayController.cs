@@ -10,6 +10,7 @@ public sealed class TrayController : ITrayView, IDisposable
     private readonly ContextMenuStrip _menu;
     private readonly ToolStripMenuItem _pushItem;
     private readonly ToolStripMenuItem _openTuiItem;
+    private readonly ToolStripMenuItem _openControlUiItem;
     private readonly ToolStripMenuItem _restartItem;
     private readonly ToolStripMenuItem _settingsItem;
     private readonly ToolStripMenuItem _exitItem;
@@ -19,6 +20,7 @@ public sealed class TrayController : ITrayView, IDisposable
 
     public event EventHandler? PushTodayFilesRequested;
     public event EventHandler? OpenTuiRequested;
+    public event EventHandler? OpenControlUiRequested;
     public event EventHandler? RestartGatewayRequested;
     public event EventHandler? OpenSettingsRequested;
     public event EventHandler? ExitRequested;
@@ -34,6 +36,9 @@ public sealed class TrayController : ITrayView, IDisposable
 
         _openTuiItem = new ToolStripMenuItem("Open TUI");
         _openTuiItem.Click += (_, _) => OpenTuiRequested?.Invoke(this, EventArgs.Empty);
+
+        _openControlUiItem = new ToolStripMenuItem("Open Control UI");
+        _openControlUiItem.Click += (_, _) => OpenControlUiRequested?.Invoke(this, EventArgs.Empty);
 
         _restartItem = new ToolStripMenuItem("Restart Gateway...");
         _restartItem.Click += (_, _) =>
@@ -58,6 +63,7 @@ public sealed class TrayController : ITrayView, IDisposable
         {
             _pushItem,
             _openTuiItem,
+            _openControlUiItem,
             _restartItem,
             new ToolStripSeparator(),
             _settingsItem,

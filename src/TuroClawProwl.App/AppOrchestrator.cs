@@ -15,6 +15,7 @@ public sealed class AppOrchestrator : IDisposable
     private readonly ResolveTodayFileStatusesUseCase _resolveTodayUseCase;
     private readonly PushTodayFilesUseCase _pushUseCase;
     private readonly OpenTuiUseCase _openTuiUseCase;
+    private readonly OpenControlUiUseCase _openControlUiUseCase;
     private readonly RestartGatewayUseCase _restartUseCase;
     private readonly IReadOnlyList<(string AbsolutePath, string RepoPath)> _trackedFiles;
     private readonly ILogger<AppOrchestrator> _logger;
@@ -30,6 +31,7 @@ public sealed class AppOrchestrator : IDisposable
         ResolveTodayFileStatusesUseCase resolveTodayUseCase,
         PushTodayFilesUseCase pushUseCase,
         OpenTuiUseCase openTuiUseCase,
+        OpenControlUiUseCase openControlUiUseCase,
         RestartGatewayUseCase restartUseCase,
         IReadOnlyList<(string AbsolutePath, string RepoPath)> trackedFiles,
         ILogger<AppOrchestrator>? logger = null)
@@ -39,6 +41,7 @@ public sealed class AppOrchestrator : IDisposable
         _resolveTodayUseCase = resolveTodayUseCase;
         _pushUseCase = pushUseCase;
         _openTuiUseCase = openTuiUseCase;
+        _openControlUiUseCase = openControlUiUseCase;
         _restartUseCase = restartUseCase;
         _trackedFiles = trackedFiles;
         _logger = logger ?? NullLogger<AppOrchestrator>.Instance;
@@ -70,6 +73,8 @@ public sealed class AppOrchestrator : IDisposable
 
     public Task OpenTuiAsync() => _openTuiUseCase.ExecuteAsync();
 
+    public Task OpenControlUiAsync() => _openControlUiUseCase.ExecuteAsync();
+
     public Task RestartGatewayAsync() => _restartUseCase.ExecuteAsync();
 
     private async Task PollHealthOnceAsync()
@@ -95,5 +100,6 @@ public sealed class AppOrchestrator : IDisposable
         _pollTimer.Dispose();
         _todayTimer.Stop();
         _todayTimer.Dispose();
+        _openControlUiUseCase.DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 }
