@@ -12,6 +12,9 @@
     <Platforms>x64</Platforms>
     <RootNamespace>TuroClawProwl.App</RootNamespace>
     <AssemblyName>TuroClawProwl</AssemblyName>
+    <Version>0.1.0</Version>
+    <Company>Creatus</Company>
+    <Product>TuroClawProwl</Product>
   </PropertyGroup>
 
   <ItemGroup>
