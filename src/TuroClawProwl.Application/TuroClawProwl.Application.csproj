@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\TuroClawProwl.Domain\TuroClawProwl.Domain.csproj" />
+    <InternalsVisibleTo Include="TuroClawProwl.Application.Tests" />
   </ItemGroup>
 
   <ItemGroup>

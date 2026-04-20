@@ -100,6 +100,5 @@ public sealed class AppOrchestrator : IDisposable
         _pollTimer.Dispose();
         _todayTimer.Stop();
         _todayTimer.Dispose();
-        _openControlUiUseCase.DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 }

@@ -68,8 +68,6 @@ internal static class Program
 
         var gitRunner = new GitProcessRunner();
         var sshRunner = new OpenSshRunner();
-        var sshTunnelLauncher = new OpenSshTunnelLauncher(
-            logger: loggerFactory.CreateLogger<OpenSshTunnelLauncher>());
         var browserLauncher = new DefaultBrowserLauncher();
         var terminal = new WindowsTerminalLauncher();
         var toasts = new ToastNotificationsToastService();
@@ -88,7 +86,7 @@ internal static class Program
             loggerFactory.CreateLogger<PushTodayFilesUseCase>());
         var openTuiUseCase = new OpenTuiUseCase(sshTarget, terminal);
         var openControlUiUseCase = new OpenControlUiUseCase(
-            sshTarget, sshTunnelLauncher, browserLauncher, tokenStore,
+            new Uri(config.GatewayUrl), browserLauncher, tokenStore,
             loggerFactory.CreateLogger<OpenControlUiUseCase>());
         var restartUseCase = new RestartGatewayUseCase(sshTarget, sshRunner, toasts);
 
