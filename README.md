@@ -4,7 +4,7 @@
 
 A Windows tray app that keeps a remote OpenClaw Gateway on a Mac Mini in sight, and auto-commits + pushes the files a Claude "today" skill reads so a remote Claude Code instance can always pull the latest state without you stopping to `git commit && git push` by hand.
 
-Built as a personal pilot by [Michael Åhs / Creatus](https://creatus.se). MIT-licensed — see [LICENSE](LICENSE).
+Built as a personal pilot by Michael Åhs.
 
 ## What it does
 
