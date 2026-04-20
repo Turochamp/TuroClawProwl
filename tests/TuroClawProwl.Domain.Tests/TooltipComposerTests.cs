@@ -5,32 +5,29 @@ namespace TuroClawProwl.Domain.Tests;
 
 public class TooltipComposerTests
 {
-    private static readonly RepoState Clean = new(0, false, true);
-    private static readonly RepoState Unpushed = new(3, false, true);
-    private static readonly RepoState Uncommitted = new(0, true, true);
-    private static readonly RepoState NoUpstream = new(0, false, false);
+    private static TodayFileStatus File(string repoName, string fileName, bool uncommitted, bool unpushed) =>
+        new($@"C:\Git\{repoName}\{fileName}", $@"C:\Git\{repoName}", uncommitted, unpushed);
 
-    private static readonly DateTimeOffset FixedNow =
-        new(2026, 4, 18, 12, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset FixedNow = new(2026, 4, 18, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
     public void Tooltip_shows_gateway_never_reached_before_first_successful_poll()
     {
-        var tip = TooltipComposer.Compose(new GatewayHealth.NeverReached(), Array.Empty<RepoState>());
+        var tip = TooltipComposer.Compose(new GatewayHealth.NeverReached(), Array.Empty<TodayFileStatus>());
         tip.Should().Contain("Gateway: never reached");
     }
 
     [Fact]
     public void Tooltip_shows_gateway_healthy_when_gateway_is_up()
     {
-        var tip = TooltipComposer.Compose(new GatewayHealth.Healthy(FixedNow, null), Array.Empty<RepoState>());
+        var tip = TooltipComposer.Compose(new GatewayHealth.Healthy(FixedNow, null), Array.Empty<TodayFileStatus>());
         tip.Should().Contain("Gateway: healthy");
     }
 
     [Fact]
     public void Tooltip_shows_plain_unreachable_when_there_was_no_prior_healthy_state()
     {
-        var tip = TooltipComposer.Compose(new GatewayHealth.Unreachable(null), Array.Empty<RepoState>());
+        var tip = TooltipComposer.Compose(new GatewayHealth.Unreachable(null), Array.Empty<TodayFileStatus>());
         tip.Should().Contain("Gateway: unreachable");
         tip.Should().NotContain("last seen");
     }
@@ -39,47 +36,131 @@ public class TooltipComposerTests
     public void Tooltip_shows_unreachable_with_formatted_last_seen_timestamp_after_prior_healthy_state()
     {
         var lastSeen = new DateTimeOffset(2026, 4, 18, 15, 23, 0, TimeSpan.Zero);
-        var tip = TooltipComposer.Compose(new GatewayHealth.Unreachable(lastSeen), Array.Empty<RepoState>());
-        tip.Should().Contain("Gateway: unreachable");
+        var tip = TooltipComposer.Compose(new GatewayHealth.Unreachable(lastSeen), Array.Empty<TodayFileStatus>());
         tip.Should().Contain("last seen 2026-04-18 15:23 UTC");
     }
 
     [Fact]
-    public void Tooltip_includes_total_repo_count_line()
+    public void Tooltip_shows_not_configured_when_today_file_list_is_empty()
     {
-        var tip = TooltipComposer.Compose(new GatewayHealth.NeverReached(), new[] { Clean, Clean, Unpushed });
-        tip.Should().Contain("Repos: 3");
+        var tip = TooltipComposer.Compose(new GatewayHealth.NeverReached(), Array.Empty<TodayFileStatus>());
+        tip.Should().Contain("Today: not configured");
     }
 
     [Fact]
-    public void Tooltip_includes_breakdown_counts_for_every_category()
+    public void Tooltip_reports_all_synced_when_every_today_file_is_synced()
     {
         var tip = TooltipComposer.Compose(
             new GatewayHealth.Healthy(FixedNow, null),
-            new[] { Clean, Clean, Unpushed, Uncommitted, NoUpstream });
+            new[] { File("a", "STATE.md", false, false), File("b", "STATE.md", false, false) });
+        tip.Should().Contain("Today: 2/2 synced");
+        tip.Should().NotContain("uncommitted");
+        tip.Should().NotContain("unpushed");
+    }
 
-        tip.Should().Contain("2 clean");
-        tip.Should().Contain("1 unpushed");
-        tip.Should().Contain("1 uncommitted");
-        tip.Should().Contain("1 no upstream");
+    [Fact]
+    public void Tooltip_lists_uncommitted_repos_by_name()
+    {
+        var tip = TooltipComposer.Compose(
+            new GatewayHealth.Healthy(FixedNow, null),
+            new[]
+            {
+                File("CCA-AgentBrew", "STATE.md", uncommitted: true, unpushed: false),
+                File("CCA-CareerOps", "STATE.md", uncommitted: true, unpushed: false),
+                File("CCA-HomeBase", "STATE.md", uncommitted: false, unpushed: false),
+            });
+
+        tip.Should().Contain("Today: 1/3 synced");
+        tip.Should().Contain("uncommitted: CCA-AgentBrew, CCA-CareerOps");
+        tip.Should().NotContain("unpushed:");
+    }
+
+    [Fact]
+    public void Tooltip_lists_unpushed_repos_under_unpushed_bucket_when_no_uncommitted_files()
+    {
+        var tip = TooltipComposer.Compose(
+            new GatewayHealth.Healthy(FixedNow, null),
+            new[]
+            {
+                File("CCA-AgentBrew", "STATE.md", uncommitted: false, unpushed: true),
+                File("CCA-CareerOps", "STATE.md", uncommitted: false, unpushed: false),
+            });
+
+        tip.Should().Contain("Today: 1/2 synced");
+        tip.Should().Contain("unpushed: CCA-AgentBrew");
+        tip.Should().NotContain("uncommitted:");
+    }
+
+    [Fact]
+    public void Repo_with_both_problems_is_classified_as_uncommitted_only_and_not_duplicated()
+    {
+        var tip = TooltipComposer.Compose(
+            new GatewayHealth.Healthy(FixedNow, null),
+            new[] { File("CCA-AgentBrew", "STATE.md", uncommitted: true, unpushed: true) });
+
+        tip.Should().Contain("uncommitted: CCA-AgentBrew");
+        tip.Should().NotContain("unpushed:");
+    }
+
+    [Fact]
+    public void Tooltip_deduplicates_repo_names_when_multiple_files_live_in_the_same_repo()
+    {
+        var tip = TooltipComposer.Compose(
+            new GatewayHealth.Healthy(FixedNow, null),
+            new[]
+            {
+                File("CCA-AgentBrew", "STATE.md", uncommitted: true, unpushed: false),
+                File("CCA-AgentBrew", "OTHER.md", uncommitted: true, unpushed: false),
+            });
+
+        var occurrences = System.Text.RegularExpressions.Regex.Matches(tip, "CCA-AgentBrew").Count;
+        occurrences.Should().Be(1);
+    }
+
+    [Fact]
+    public void Tooltip_mixes_uncommitted_and_unpushed_buckets_separated_by_em_dash()
+    {
+        var tip = TooltipComposer.Compose(
+            new GatewayHealth.Healthy(FixedNow, null),
+            new[]
+            {
+                File("CCA-AgentBrew", "STATE.md", uncommitted: true, unpushed: false),
+                File("CCA-HomeBase", "STATE.md", uncommitted: false, unpushed: true),
+            });
+
+        tip.Should().Contain("uncommitted: CCA-AgentBrew");
+        tip.Should().Contain("unpushed: CCA-HomeBase");
+    }
+
+    [Fact]
+    public void Tooltip_caps_repo_list_per_bucket_and_emits_more_counter_when_overflowing()
+    {
+        var files = Enumerable.Range(0, 7)
+            .Select(i => File($"repo-{i}", "STATE.md", uncommitted: true, unpushed: false))
+            .ToArray();
+
+        var tip = TooltipComposer.Compose(new GatewayHealth.Healthy(FixedNow, null), files);
+
+        tip.Should().Contain("Today: 0/7 synced");
+        tip.Should().Contain("+3 more", "4 repos are listed and the rest are counted");
     }
 
     [Fact]
     public void Tooltip_is_two_lines()
     {
-        var tip = TooltipComposer.Compose(new GatewayHealth.NeverReached(), Array.Empty<RepoState>());
+        var tip = TooltipComposer.Compose(new GatewayHealth.NeverReached(), Array.Empty<TodayFileStatus>());
         tip.Split('\n').Should().HaveCount(2);
     }
 
     [Fact]
     public void Composer_rejects_null_gateway()
     {
-        Action act = () => TooltipComposer.Compose(null!, Array.Empty<RepoState>());
+        Action act = () => TooltipComposer.Compose(null!, Array.Empty<TodayFileStatus>());
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
-    public void Composer_rejects_null_repos()
+    public void Composer_rejects_null_today_files()
     {
         Action act = () => TooltipComposer.Compose(new GatewayHealth.NeverReached(), null!);
         act.Should().Throw<ArgumentNullException>();
