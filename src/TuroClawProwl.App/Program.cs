@@ -60,7 +60,7 @@ internal static class Program
         using var trayController = new TrayController(dispatcher);
 
         var clock = new WallClock();
-        var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(4) };
         var retryPipeline = HttpGatewayClient.BuildDefaultRetryPipeline(
             loggerFactory.CreateLogger("TuroClawProwl.Infrastructure.Gateway.HttpGatewayClient"));
         IGatewayClient gatewayClient = string.IsNullOrWhiteSpace(config.GatewayUrl)
