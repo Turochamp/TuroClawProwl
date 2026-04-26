@@ -146,6 +146,7 @@ internal static class Program
         return new LoggerConfiguration()
             .MinimumLevel.Is(minLevel)
             .Destructure.With(new SensitivePropertyMaskingPolicy())
+            .Filter.With(new RepeatedMessageDeduplicator(TimeSpan.FromMinutes(5)))
             .WriteTo.File(
                 path: Path.Combine(AppDataDirectory, "logs", "prowl-.log"),
                 rollingInterval: RollingInterval.Day,
