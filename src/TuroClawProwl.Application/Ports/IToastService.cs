@@ -15,4 +15,9 @@ public interface IToastService
     Task NotifyGatewayRestartResultAsync(
         SshCommandResult result,
         CancellationToken cancellationToken = default);
+
+    Task NotifyTodaySyncFailureAsync(
+        string title,
+        string detail,
+        CancellationToken cancellationToken = default);
 }

@@ -101,7 +101,7 @@ internal static class Program
             loggerFactory.CreateLogger<AppOrchestrator>());
 
         using var todaySyncer = trackedPaths.Count > 0
-            ? new TodaySyncer(trackedPaths, gitRunner, loggerFactory.CreateLogger<TodaySyncer>())
+            ? new TodaySyncer(trackedPaths, gitRunner, toasts, loggerFactory.CreateLogger<TodaySyncer>())
             : null;
         todaySyncer?.Start();
 

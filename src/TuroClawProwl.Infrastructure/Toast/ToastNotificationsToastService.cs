@@ -66,6 +66,21 @@ public sealed class ToastNotificationsToastService : IToastService
         return string.Join(", ", items.Take(maxListed)) + $" +{items.Length - maxListed} more";
     }
 
+    public Task NotifyTodaySyncFailureAsync(
+        string title,
+        string detail,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(title);
+        ArgumentNullException.ThrowIfNull(detail);
+
+        new ToastContentBuilder()
+            .AddText(title)
+            .AddText(Clip(detail, 200))
+            .Show();
+        return Task.CompletedTask;
+    }
+
     public Task NotifyGatewayRestartResultAsync(SshCommandResult result, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(result);

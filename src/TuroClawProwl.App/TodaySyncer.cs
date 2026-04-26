@@ -5,18 +5,35 @@ using TuroClawProwl.Application.Ports;
 namespace TuroClawProwl.App;
 
 // Watches a fixed list of tracked file paths (parsed from the Today
-// SKILL.md), debounces per-repo for 10s after any change, then stages
+// SKILL.md), debounces per-repo for 60s after any change, then stages
 // each tracked file, commits per-repo, and pushes. File changes that
 // aren't in the tracked list are ignored.
+//
+// One failed file does NOT abort the rest of the per-repo batch — we
+// accumulate per-file outcomes, push if anything succeeded, and emit
+// one structured outcome log per sync. Failures fire a toast (deduped
+// per (repo,path,kind) within FailureToastDedupWindow) so the user
+// finds out without log diving. A per-repo SemaphoreSlim guarantees
+// only one git operation runs against a given repo at a time, even if
+// a debounce CTS cancellation arrives too late to stop an in-flight
+// SyncRepoAsync.
 public sealed class TodaySyncer : IDisposable
 {
     private static readonly TimeSpan DebounceWindow = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan FailureToastDedupWindow = TimeSpan.FromMinutes(10);
 
     private readonly IReadOnlyList<string> _trackedPaths;
     private readonly IGitRunner _git;
+    private readonly IToastService? _toasts;
     private readonly ILogger<TodaySyncer> _logger;
     private readonly List<FileSystemWatcher> _watchers = new();
     private readonly Dictionary<string, CancellationTokenSource> _perRepoDebounce =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, SemaphoreSlim> _perRepoSemaphores =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTimeOffset> _lastFailureToastAt =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _suppressedPaths =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Lock _gate = new();
     private bool _disposed;
@@ -24,6 +41,7 @@ public sealed class TodaySyncer : IDisposable
     public TodaySyncer(
         IReadOnlyList<string> trackedPaths,
         IGitRunner git,
+        IToastService? toasts = null,
         ILogger<TodaySyncer>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(trackedPaths);
@@ -31,6 +49,7 @@ public sealed class TodaySyncer : IDisposable
 
         _trackedPaths = trackedPaths;
         _git = git;
+        _toasts = toasts;
         _logger = logger ?? NullLogger<TodaySyncer>.Instance;
     }
 
@@ -76,8 +95,16 @@ public sealed class TodaySyncer : IDisposable
 
     private void OnFileChanged(object sender, FileSystemEventArgs e)
     {
+        _logger.LogDebug("Today syncer: watcher event {ChangeType} {Path}", e.ChangeType, e.FullPath);
+
         if (!_trackedPaths.Any(p => string.Equals(p, e.FullPath, StringComparison.OrdinalIgnoreCase)))
             return;
+
+        if (_suppressedPaths.Contains(e.FullPath))
+        {
+            _logger.LogDebug("Today syncer: skipping suppressed path {Path}", e.FullPath);
+            return;
+        }
 
         var repoPath = FindContainingRepo(e.FullPath);
         if (repoPath is null)
@@ -122,44 +149,138 @@ public sealed class TodaySyncer : IDisposable
     {
         var relatives = _trackedPaths
             .Where(p => p.StartsWith(repoPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-            .Select(p => Path.GetRelativePath(repoPath, p).Replace('\\', '/'))
+            .Where(p => !_suppressedPaths.Contains(p))
+            .Select(p => (Absolute: p, Relative: Path.GetRelativePath(repoPath, p).Replace('\\', '/')))
             .ToArray();
         if (relatives.Length == 0) return;
 
-        var message = $"auto: today sync {DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm:ss}";
-        var committedAny = false;
-        foreach (var rel in relatives)
+        var sem = GetOrCreateSemaphore(repoPath);
+        await sem.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            var commit = await _git.CommitPathAsync(repoPath, rel, message, cancellationToken)
-                .ConfigureAwait(false);
-            switch (commit)
+            var message = $"auto: today sync {DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm:ss}";
+            var committed = 0;
+            var skipped = 0;
+            var failed = 0;
+
+            foreach (var (absolute, rel) in relatives)
             {
-                case GitCommitResult.Success s:
-                    if (s.HadChangesToCommit) committedAny = true;
-                    break;
-                case GitCommitResult.Failure f:
-                    _logger.LogWarning("Today sync commit failed in {Repo} for {Path}: {Error}",
-                        repoPath, rel, f.Error);
-                    return;
+                var commit = await _git.CommitPathAsync(repoPath, rel, message, cancellationToken)
+                    .ConfigureAwait(false);
+                switch (commit)
+                {
+                    case GitCommitResult.Success s:
+                        if (s.HadChangesToCommit) committed++;
+                        else skipped++;
+                        break;
+                    case GitCommitResult.Failure f:
+                        failed++;
+                        _logger.LogWarning("Today sync commit failed in {Repo} for {Path}: {Error}",
+                            repoPath, rel, f.Error);
+                        await TryNotifyFailureAsync(
+                            repoPath, rel, kind: "commit",
+                            title: $"Today sync: commit failed in {RepoName(repoPath)}",
+                            detail: $"{rel}: {f.Error}",
+                            cancellationToken).ConfigureAwait(false);
+                        // If this looks like a parent-repo gitignore situation,
+                        // suppress the path for the rest of the process so we
+                        // don't fire the same toast again every debounce window.
+                        if (LooksLikeGitignoreFailure(f.Error))
+                        {
+                            _suppressedPaths.Add(absolute);
+                            _logger.LogWarning(
+                                "Today syncer: suppressing {Path} for the rest of this process " +
+                                "(parent-repo gitignore; needs an inner .git)", absolute);
+                        }
+                        break;
+                }
             }
+
+            var pushed = false;
+            if (committed > 0)
+            {
+                var push = await _git.PushAsync(repoPath, cancellationToken).ConfigureAwait(false);
+                switch (push)
+                {
+                    case GitPushResult.Success:
+                        pushed = true;
+                        _logger.LogInformation("Today sync pushed {Repo}", repoPath);
+                        break;
+                    case GitPushResult.Failure f:
+                        _logger.LogWarning("Today sync push failed in {Repo}: {Error}", repoPath, f.Error);
+                        await TryNotifyFailureAsync(
+                            repoPath, path: null, kind: "push",
+                            title: $"Today sync: push failed in {RepoName(repoPath)}",
+                            detail: f.Error,
+                            cancellationToken).ConfigureAwait(false);
+                        break;
+                }
+            }
+
+            _logger.LogInformation(
+                "Today sync: {Repo} committed={Committed} skipped={Skipped} failed={Failed} pushed={Pushed}",
+                repoPath, committed, skipped, failed, pushed);
+        }
+        finally
+        {
+            sem.Release();
+        }
+    }
+
+    private SemaphoreSlim GetOrCreateSemaphore(string repoPath)
+    {
+        lock (_gate)
+        {
+            if (!_perRepoSemaphores.TryGetValue(repoPath, out var sem))
+            {
+                sem = new SemaphoreSlim(1, 1);
+                _perRepoSemaphores[repoPath] = sem;
+            }
+            return sem;
+        }
+    }
+
+    private async Task TryNotifyFailureAsync(
+        string repoPath,
+        string? path,
+        string kind,
+        string title,
+        string detail,
+        CancellationToken cancellationToken)
+    {
+        if (_toasts is null) return;
+
+        var key = $"{repoPath}|{path ?? string.Empty}|{kind}";
+        var now = DateTimeOffset.UtcNow;
+        lock (_gate)
+        {
+            if (_lastFailureToastAt.TryGetValue(key, out var last) &&
+                now - last < FailureToastDedupWindow)
+            {
+                return;
+            }
+            _lastFailureToastAt[key] = now;
         }
 
-        if (!committedAny)
+        try
         {
-            _logger.LogDebug("Today sync: nothing to commit in {Repo}", repoPath);
-            return;
+            await _toasts.NotifyTodaySyncFailureAsync(title, detail, cancellationToken)
+                .ConfigureAwait(false);
         }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Today syncer: failed to dispatch failure toast for {Key}", key);
+        }
+    }
 
-        var push = await _git.PushAsync(repoPath, cancellationToken).ConfigureAwait(false);
-        switch (push)
-        {
-            case GitPushResult.Success:
-                _logger.LogInformation("Today sync pushed {Repo}", repoPath);
-                break;
-            case GitPushResult.Failure f:
-                _logger.LogWarning("Today sync push failed in {Repo}: {Error}", repoPath, f.Error);
-                break;
-        }
+    private static bool LooksLikeGitignoreFailure(string error) =>
+        error.Contains("ignored by one of your .gitignore", StringComparison.OrdinalIgnoreCase) ||
+        error.Contains("paths are ignored", StringComparison.OrdinalIgnoreCase);
+
+    private static string RepoName(string repoPath)
+    {
+        var name = Path.GetFileName(repoPath);
+        return string.IsNullOrEmpty(name) ? repoPath : name;
     }
 
     private static string? FindContainingRepo(string filePath)
@@ -184,6 +305,11 @@ public sealed class TodaySyncer : IDisposable
                 try { cts.Cancel(); cts.Dispose(); } catch { }
             }
             _perRepoDebounce.Clear();
+            foreach (var sem in _perRepoSemaphores.Values)
+            {
+                try { sem.Dispose(); } catch { }
+            }
+            _perRepoSemaphores.Clear();
         }
         foreach (var w in _watchers)
         {
