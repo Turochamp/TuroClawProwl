@@ -73,7 +73,7 @@ internal static class Program
         var toasts = new ToastNotificationsToastService();
 
         var sshTarget = new SshTarget(config.SshHost, config.SshUser);
-        var trackedPaths = ResolveTrackedTodayPaths(config, loggerFactory);
+        var trackedPaths = TodayPathsResolver.Resolve(config, loggerFactory);
 
         var healthUseCase = new HandleHealthPollUseCase(
             gatewayClient, clock, toasts, trayController,
@@ -89,10 +89,7 @@ internal static class Program
             loggerFactory.CreateLogger<OpenControlUiUseCase>());
         var restartUseCase = new RestartGatewayUseCase(sshTarget, sshRunner, toasts);
 
-        var trackedForOrchestrator = trackedPaths
-            .Select(p => (AbsolutePath: p, RepoPath: FindContainingRepo(p) ?? ""))
-            .Where(t => t.RepoPath.Length > 0)
-            .ToArray();
+        var trackedForOrchestrator = TodayPathsResolver.ToOrchestratorPairs(trackedPaths);
 
         using var orchestrator = new AppOrchestrator(
             config, healthUseCase, resolveTodayUseCase, pushUseCase,
@@ -100,10 +97,13 @@ internal static class Program
             trackedForOrchestrator,
             loggerFactory.CreateLogger<AppOrchestrator>());
 
-        using var todaySyncer = trackedPaths.Count > 0
-            ? new TodaySyncer(trackedPaths, gitRunner, toasts, loggerFactory.CreateLogger<TodaySyncer>())
-            : null;
-        todaySyncer?.Start();
+        using var todaySyncerHandle = new TodaySyncerHandle(gitRunner, toasts, loggerFactory);
+        todaySyncerHandle.Start(trackedPaths);
+
+        using var liveConfigApplier = new LiveConfigApplier(
+            config, gatewayClient, openControlUiUseCase, restartUseCase,
+            orchestrator, todaySyncerHandle, loggerFactory);
+        configStore.ConfigSaved += (_, c) => _ = liveConfigApplier.ApplyAsync(c);
 
         trayController.PushTodayFilesRequested += async (_, _) => await orchestrator.PushTodayFilesAsync();
         trayController.OpenControlUiRequested += async (_, _) => await orchestrator.OpenControlUiAsync();
@@ -134,55 +134,6 @@ internal static class Program
     {
         using var form = new SettingsForm(configStore, tokenStore, autostart);
         form.ShowDialog();
-    }
-
-    private static IReadOnlyList<string> ResolveTrackedTodayPaths(
-        TuroClawProwlConfig config,
-        ILoggerFactory loggerFactory)
-    {
-        var logger = loggerFactory.CreateLogger("TodayPaths");
-
-        if (string.IsNullOrWhiteSpace(config.TodaySkillPath) ||
-            string.IsNullOrWhiteSpace(config.TodayCcaRoot) ||
-            string.IsNullOrWhiteSpace(config.TodayCrmIndexPath))
-        {
-            logger.LogInformation("Today sync disabled (one or more Today settings are empty)");
-            return Array.Empty<string>();
-        }
-
-        if (!File.Exists(config.TodaySkillPath))
-        {
-            logger.LogWarning("Today sync disabled: SKILL.md not found at {Path}", config.TodaySkillPath);
-            return Array.Empty<string>();
-        }
-
-        string skillMarkdown;
-        try
-        {
-            skillMarkdown = File.ReadAllText(config.TodaySkillPath);
-        }
-        catch (IOException ex)
-        {
-            logger.LogWarning(ex, "Today sync disabled: could not read {Path}", config.TodaySkillPath);
-            return Array.Empty<string>();
-        }
-
-        return TodaySkillParser.ExtractSyncPaths(
-            skillMarkdown,
-            config.TodayCcaRoot,
-            config.TodayCrmIndexPath);
-    }
-
-    private static string? FindContainingRepo(string filePath)
-    {
-        var dir = Path.GetDirectoryName(filePath);
-        while (!string.IsNullOrEmpty(dir))
-        {
-            if (Directory.Exists(Path.Combine(dir, ".git")))
-                return dir;
-            dir = Path.GetDirectoryName(dir);
-        }
-        return null;
     }
 
     private static Serilog.Core.Logger ConfigureSerilog()

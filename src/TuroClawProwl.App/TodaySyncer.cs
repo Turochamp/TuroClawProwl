@@ -22,7 +22,7 @@ public sealed class TodaySyncer : IDisposable
     private static readonly TimeSpan DebounceWindow = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan FailureToastDedupWindow = TimeSpan.FromMinutes(10);
 
-    private readonly IReadOnlyList<string> _trackedPaths;
+    private IReadOnlyList<string> _trackedPaths;
     private readonly IGitRunner _git;
     private readonly IToastService? _toasts;
     private readonly ILogger<TodaySyncer> _logger;
@@ -91,6 +91,58 @@ public sealed class TodaySyncer : IDisposable
 
         _logger.LogInformation("Today syncer watching {Count} paths across {WatcherCount} directories",
             _trackedPaths.Count, _watchers.Count);
+    }
+
+    // Tear down current watchers, drain in-flight syncs, and rebuild with
+    // a new tracked-path set. Used by LiveConfigApplier when Today config
+    // changes. Safe to call concurrently with watcher events; subsequent
+    // events that race the rebuild may be missed but the next file edit
+    // re-triggers a sync.
+    public async Task RestartWithPathsAsync(
+        IReadOnlyList<string> trackedPaths,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(trackedPaths);
+
+        List<SemaphoreSlim> semaphoresToDrain;
+        lock (_gate)
+        {
+            if (_disposed) return;
+            foreach (var cts in _perRepoDebounce.Values)
+            {
+                try { cts.Cancel(); cts.Dispose(); } catch { }
+            }
+            _perRepoDebounce.Clear();
+            semaphoresToDrain = _perRepoSemaphores.Values.ToList();
+        }
+
+        // Drain outside the lock so we don't block watcher callbacks.
+        foreach (var sem in semaphoresToDrain)
+        {
+            await sem.WaitAsync(cancellationToken).ConfigureAwait(false);
+            sem.Release();
+        }
+
+        lock (_gate)
+        {
+            foreach (var sem in _perRepoSemaphores.Values)
+            {
+                try { sem.Dispose(); } catch { }
+            }
+            _perRepoSemaphores.Clear();
+            _lastFailureToastAt.Clear();
+            _suppressedPaths.Clear();
+            _trackedPaths = trackedPaths;
+        }
+
+        foreach (var w in _watchers)
+        {
+            w.EnableRaisingEvents = false;
+            w.Dispose();
+        }
+        _watchers.Clear();
+
+        Start();
     }
 
     private void OnFileChanged(object sender, FileSystemEventArgs e)
