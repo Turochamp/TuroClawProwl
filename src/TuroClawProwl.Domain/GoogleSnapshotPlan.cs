@@ -7,10 +7,19 @@ public sealed record SnapshotTaskList(string Id, string ListId, string Branch, s
 public sealed record CalendarWindow(DateTimeOffset FirstDay, DateTimeOffset LastDay)
 {
     public string TimeMin =>
-        FirstDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + "T00:00:00Z";
+        StartOfLocalDayUtc(FirstDay).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture) + "Z";
 
     public string TimeMax =>
-        LastDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + "T23:59:59Z";
+        EndOfLocalDayUtc(LastDay).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture) + "Z";
+
+    // Preserves each DateTimeOffset's own offset when finding the start/end of its
+    // local day, then converts that instant to UTC. Does not assume a fixed offset
+    // and does not consult DateTime.Now or the machine's local time zone.
+    private static DateTimeOffset StartOfLocalDayUtc(DateTimeOffset value) =>
+        new DateTimeOffset(value.Date, value.Offset).ToUniversalTime();
+
+    private static DateTimeOffset EndOfLocalDayUtc(DateTimeOffset value) =>
+        new DateTimeOffset(value.Date, value.Offset).AddDays(1).AddSeconds(-1).ToUniversalTime();
 }
 
 // The task lists and their branches are a fixed contract, not registry-derived:

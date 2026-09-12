@@ -76,23 +76,42 @@ public class GoogleSnapshotPlanTests
     [Fact]
     public void The_window_covers_today_plus_two_days()
     {
+        // Oslo (+02:00) local midnight on 2026-09-12 is 2026-09-11T22:00:00Z, and
+        // local 23:59:59 on 2026-09-14 is 2026-09-14T21:59:59Z: the window bounds
+        // are true UTC instants of the local day, not the local date with "Z" glued on.
         var today = new DateTimeOffset(2026, 9, 12, 8, 30, 0, TimeSpan.FromHours(2));
 
         var window = GoogleSnapshotPlan.WindowFor(today);
 
-        window.TimeMin.Should().Be("2026-09-12T00:00:00Z");
-        window.TimeMax.Should().Be("2026-09-14T23:59:59Z");
+        window.TimeMin.Should().Be("2026-09-11T22:00:00Z");
+        window.TimeMax.Should().Be("2026-09-14T21:59:59Z");
     }
 
     [Fact]
     public void The_window_rolls_over_a_month_boundary_correctly()
     {
+        // FirstDay local midnight 2026-09-30T00:00:00+02:00 -> 2026-09-29T22:00:00Z.
+        // LastDay (FirstDay + 2 days) local end-of-day 2026-10-02T23:59:59+02:00
+        // -> 2026-10-02T21:59:59Z.
         var today = new DateTimeOffset(2026, 9, 30, 23, 0, 0, TimeSpan.FromHours(2));
 
         var window = GoogleSnapshotPlan.WindowFor(today);
 
-        window.TimeMin.Should().Be("2026-09-30T00:00:00Z");
-        window.TimeMax.Should().Be("2026-10-02T23:59:59Z");
+        window.TimeMin.Should().Be("2026-09-29T22:00:00Z");
+        window.TimeMax.Should().Be("2026-10-02T21:59:59Z");
+    }
+
+    [Fact]
+    public void A_zero_offset_input_is_unchanged_by_the_utc_conversion()
+    {
+        // Proves the fix converts using each value's own offset rather than applying
+        // a blanket shift: at +00:00 the local day and the UTC day coincide exactly.
+        var today = new DateTimeOffset(2026, 9, 12, 8, 30, 0, TimeSpan.Zero);
+
+        var window = GoogleSnapshotPlan.WindowFor(today);
+
+        window.TimeMin.Should().Be("2026-09-12T00:00:00Z");
+        window.TimeMax.Should().Be("2026-09-14T23:59:59Z");
     }
 
     [Fact]
