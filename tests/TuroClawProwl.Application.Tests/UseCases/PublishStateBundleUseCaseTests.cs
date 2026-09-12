@@ -95,7 +95,7 @@ public class PublishStateBundleUseCaseTests
     {
         SetUpFullHappyPath();
 
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
 
         _captured.Should().NotBeNull();
         _captured!.Files.Select(f => f.RelativePath).Should().Contain(new[]
@@ -110,7 +110,7 @@ public class PublishStateBundleUseCaseTests
     {
         SetUpFullHappyPath();
 
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
 
         _captured!.Files.Should().NotContain(f => f.RelativePath.Contains("ChromeBookmarks", StringComparison.Ordinal));
         _captured!.Manifest.Sources.Should().NotContain(s => s.Id.Contains("ChromeBookmarks", StringComparison.Ordinal));
@@ -121,7 +121,7 @@ public class PublishStateBundleUseCaseTests
     {
         SetUpFullHappyPath();
 
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
 
         _captured!.Files.Select(f => f.RelativePath).Should().Contain(new[]
         {
@@ -136,7 +136,7 @@ public class PublishStateBundleUseCaseTests
     {
         SetUpFullHappyPath();
 
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
 
         _captured!.Files.Single(f => f.RelativePath == "cca/YNE.STATE.md").Content
             .Should().Be("# YNE state");
@@ -147,7 +147,7 @@ public class PublishStateBundleUseCaseTests
     {
         SetUpFullHappyPath();
 
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
 
         _captured!.Manifest.SchemaVersion.Should().Be(BundleManifest.CurrentSchemaVersion);
         _captured!.Manifest.PublishedAt.Should().Be(Now);
@@ -160,7 +160,7 @@ public class PublishStateBundleUseCaseTests
     {
         SetUpFullHappyPath();
 
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
 
         _captured!.Manifest.Sources.Should().HaveCount(5);
         _captured!.Manifest.Failures.Should()
@@ -178,7 +178,7 @@ public class PublishStateBundleUseCaseTests
     {
         SetUpFullHappyPath();
 
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
 
         _captured!.Manifest.Sources.Single(s => s.Id == "registry").BundlePath
             .Should().Be("registry.md");
@@ -196,7 +196,7 @@ public class PublishStateBundleUseCaseTests
     {
         SetUpFullHappyPath();
 
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
 
         var payloadPaths = _captured!.Files.Select(f => f.RelativePath).ToArray();
         _captured!.Manifest.Sources.Select(s => s.BundlePath).Should().BeEquivalentTo(payloadPaths);
@@ -207,7 +207,7 @@ public class PublishStateBundleUseCaseTests
     {
         SetUpFullHappyPath();
 
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
 
         _captured!.Manifest.Sources.Should().AllSatisfy(s => s.Verified.Should().Be(s.Modified));
         _captured!.Manifest.Sources.Single(s => s.Id == "cca/YNE").Verified
@@ -219,7 +219,7 @@ public class PublishStateBundleUseCaseTests
     {
         SetUpFullHappyPath();
 
-        var result = await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+        var result = await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
 
         result.Should().BeOfType<BundlePublishResult.Success>()
             .Which.CommitSha.Should().Be("abc1234");
@@ -247,7 +247,7 @@ public class PublishStateBundleUseCaseTests
         _files.Setup(f => f.ReadAsync(Abs("CCA-SmoEms/STATE.md"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new SourceReadResult.Missing());
 
-        var result = await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+        var result = await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
 
         result.Should().BeOfType<BundlePublishResult.Success>();
         _captured!.Manifest.Failures.Should().ContainSingle(f => f.Id == "cca/SmoEms")
@@ -268,7 +268,7 @@ public class PublishStateBundleUseCaseTests
         _files.Setup(f => f.ReadAsync(Abs("CCA-YNE/STATE.md"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new SourceReadResult.Unreadable("The process cannot access the file"));
 
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
 
         _captured!.Manifest.Failures.Should().ContainSingle(f => f.Id == "cca/YNE")
             .Which.Reason.Should().Be("The process cannot access the file");
@@ -284,7 +284,7 @@ public class PublishStateBundleUseCaseTests
         SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts", Now.AddHours(-3));
         SetUpFile(BundleLayout.WeeklyRelativePath(Now.ToLocalTime()), "# Week", Now.AddDays(-2));
 
-        var result = await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+        var result = await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
 
         result.Should().BeOfType<BundlePublishResult.Success>();
         _captured!.Manifest.Failures.Should().ContainSingle(f => f.Id == "registry");
@@ -306,7 +306,7 @@ public class PublishStateBundleUseCaseTests
         _gitFacts.Setup(g => g.GetFileFactsAsync(Abs("CCA-YNE/STATE.md"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(GitFileFacts.OutsideRepository());
 
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
 
         var yne = _captured!.Manifest.Sources.Single(s => s.Id == "cca/YNE");
         yne.Committed.Should().BeNull();
@@ -326,7 +326,7 @@ public class PublishStateBundleUseCaseTests
         _gitFacts.Setup(g => g.GetFileFactsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(GitFileFacts.Untracked());
 
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
 
         _captured!.Manifest.Sources.Should().AllSatisfy(s =>
         {
@@ -348,7 +348,7 @@ public class PublishStateBundleUseCaseTests
             .ReturnsAsync(new GitFileFacts(
                 InRepository: true, Tracked: true, Dirty: true, LastCommitAuthorDate: Now.AddDays(-4)));
 
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
 
         _captured!.Files.Single(f => f.RelativePath == "cca/YNE.STATE.md").Content
             .Should().Be("# YNE state — edited, not committed");

@@ -15,6 +15,8 @@ public sealed class PublishStateBundleUseCase
     private readonly IClock _clock;
     private readonly ILogger<PublishStateBundleUseCase> _logger;
 
+    private DateTimeOffset? _lastCommittedPublishAt;
+
     public PublishStateBundleUseCase(
         ISourceFileReader files,
         IGitFileFactsReader gitFacts,
@@ -126,9 +128,21 @@ public sealed class PublishStateBundleUseCase
             "State bundle collected {SourceCount} sources and {FailureCount} failures from branch {Branch}",
             collected.Sources.Count, collected.Failures.Count, sourceBranch);
 
+        // No previous committed publish means the verified timestamps are not on
+        // record at all yet, so the first publish of a session is a heartbeat.
+        var heartbeatDue =
+            _lastCommittedPublishAt is not { } last ||
+            now - last >= request.HeartbeatInterval;
+
         var published = await _publisher
-            .PublishAsync(new BundlePayload(collected.Files, manifest), cancellationToken)
+            .PublishAsync(
+                new BundlePayload(collected.Files, manifest, heartbeatDue), cancellationToken)
             .ConfigureAwait(false);
+
+        // Only an actual commit puts the timestamps on record, so only that
+        // resets the window. A no-op or a failure leaves the heartbeat due.
+        if (published is BundlePublishResult.Success { FileCount: > 0 })
+            _lastCommittedPublishAt = now;
 
         // A snapshot misconfiguration must not abort the bundle, but Michael
         // still has to be told which setting is wrong, so it is reported once

@@ -89,7 +89,8 @@ public class PublishStateBundleSnapshotTests
         new(_files.Object, _gitFacts.Object, _google.Object, _snapshots.Object,
             _publisher.Object, _clock);
 
-    private static StateBundleRequest Request() => new(HubRoot, "TuroClawProwl/0.3.0");
+    private static StateBundleRequest Request() =>
+        new(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6));
 
     [Fact]
     public async Task Both_task_lists_and_the_calendar_window_are_written_into_the_bundle()

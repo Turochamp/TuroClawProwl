@@ -1,3 +1,6 @@
 namespace TuroClawProwl.Application;
 
-public sealed record StateBundleRequest(string HubRepoPath, string PublisherVersion);
+public sealed record StateBundleRequest(
+    string HubRepoPath,
+    string PublisherVersion,
+    TimeSpan HeartbeatInterval);
