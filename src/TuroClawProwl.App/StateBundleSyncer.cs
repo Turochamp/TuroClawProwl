@@ -16,11 +16,23 @@ public sealed class StateBundleSyncer : IDisposable
     private static readonly TimeSpan DebounceWindow = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan MinimumSnapshotInterval = TimeSpan.FromMinutes(5);
 
+    // Bounds Dispose's drain (see Dispose). Long enough to cover a healthy
+    // publish's git add/commit/push and its gws task/calendar reads without
+    // false-positive abandonment; short enough that an app exit or a
+    // config-triggered rebuild that lands mid-publish is a brief pause, not
+    // a hang. Disposal also cancels _disposalCts first, so in the common
+    // case (the publish is simply waiting to post its result to a tray that
+    // can no longer pump) the drain finishes almost immediately and this
+    // timeout is only the fallback for a publish that does not unwind on
+    // cancellation, e.g. one stuck inside an unresponsive git/gws process.
+    private static readonly TimeSpan DrainTimeout = TimeSpan.FromSeconds(10);
+
     private readonly StateBundleRequest _request;
     private readonly PublishAndReportStateBundleUseCase _publishAndReport;
     private readonly ILogger<StateBundleSyncer> _logger;
     private readonly List<FileSystemWatcher> _watchers = [];
     private readonly SemaphoreSlim _publishGate = new(1, 1);
+    private readonly CancellationTokenSource _disposalCts = new();
     private readonly Lock _gate = new();
 
     private IReadOnlyList<string> _watchedPaths;
@@ -127,10 +139,17 @@ public sealed class StateBundleSyncer : IDisposable
 
     public async Task PublishNowAsync(CancellationToken cancellationToken = default)
     {
-        await _publishGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        // Linked so Dispose has something to cancel out of rather than
+        // something to outlast, no matter which token (if any) the caller
+        // passed -- including the startup call, which passes none.
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _disposalCts.Token);
+        var token = linked.Token;
+
+        await _publishGate.WaitAsync(token).ConfigureAwait(false);
         try
         {
-            await _publishAndReport.ExecuteAsync(_request, cancellationToken).ConfigureAwait(false);
+            await _publishAndReport.ExecuteAsync(_request, token).ConfigureAwait(false);
         }
         finally
         {
@@ -195,6 +214,17 @@ public sealed class StateBundleSyncer : IDisposable
             CancelIntervalLoop();
         }
 
+        // Trip any in-flight PublishNowAsync call before draining, including
+        // one started with CancellationToken.None (the startup publish). An
+        // in-flight publish's last step is posting its result to the tray,
+        // which awaits the WinForms synchronization context; if Dispose runs
+        // on the UI thread (app exit, or a Settings save that lands while
+        // the startup publish is still running) that context can never pump
+        // again, so an unbounded wait below would deadlock the very thread
+        // the publish is waiting on. Cancelling first gives that await
+        // something to unwind from instead.
+        _disposalCts.Cancel();
+
         foreach (var w in _watchers)
         {
             w.EnableRaisingEvents = false;
@@ -202,19 +232,34 @@ public sealed class StateBundleSyncer : IDisposable
         }
         _watchers.Clear();
 
-        // Drain before disposing the gate: a publish that is already past
+        // Drain, bounded by DrainTimeout: a publish that is already past
         // WaitAsync and mid-flight must finish -- and hit its own finally's
         // Release -- before the gate goes away, or that Release throws
         // ObjectDisposedException, which would surface as a spurious error on
         // every app exit or config-triggered rebuild that lands mid-publish.
-        // This unbounded block mirrors the retired TodaySyncer's drain (it
-        // awaited instead, since Dispose there had no in-flight git work to
-        // wait past); it also means StateBundleSyncerHandle.RebuildAsync can
-        // rely on Dispose to guarantee this syncer's git work is finished
-        // before the replacement (which shares the same publish use case and
-        // worktree) starts, so the two can never race the same worktree.
-        _publishGate.Wait();
-        _publishGate.Release();
+        // The cancellation above should make this fast in the common case;
+        // the timeout is the fallback for a publish that does not unwind on
+        // cancellation (e.g. one stuck inside an unresponsive git/gws
+        // process) -- outliving the timeout is logged and the gate is
+        // disposed anyway, since blocking the UI thread forever is worse
+        // than an occasional abandoned-publish log line. This also means
+        // StateBundleSyncerHandle.RebuildAsync can rely on Dispose to
+        // guarantee this syncer's git work is finished (or abandoned) before
+        // the replacement, which shares the same publish use case and
+        // worktree, is started, so the two can never race the same worktree
+        // for longer than DrainTimeout.
+        if (_publishGate.Wait(DrainTimeout))
+        {
+            _publishGate.Release();
+        }
+        else
+        {
+            _logger.LogWarning(
+                "State bundle syncer: a publish was still in flight after {Timeout}; disposing anyway",
+                DrainTimeout);
+        }
+
         _publishGate.Dispose();
+        _disposalCts.Dispose();
     }
 }

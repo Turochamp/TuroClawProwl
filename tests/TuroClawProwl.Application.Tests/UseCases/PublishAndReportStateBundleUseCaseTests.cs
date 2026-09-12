@@ -196,4 +196,19 @@ public class PublishAndReportStateBundleUseCaseTests
         _trayStates.Should().BeEmpty();
         _toasted.Should().BeEmpty();
     }
+
+    [Fact]
+    public async Task A_report_that_throws_does_not_escape_the_use_case()
+    {
+        _publisher.Setup(p => p.PublishAsync(It.IsAny<BundlePayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BundlePublishResult.Success("abc1234", 5));
+        // Simulates the tray post throwing because the UI thread (and its
+        // synchronization context) is already gone at shutdown.
+        _tray.Setup(t => t.SetPublishHealthAsync(It.IsAny<PublishHealth>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("tray already disposed"));
+
+        var result = await CreateUseCase().ExecuteAsync(Request());
+
+        result.Should().BeOfType<BundlePublishResult.Success>();
+    }
 }

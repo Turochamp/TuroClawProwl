@@ -53,7 +53,25 @@ public sealed class PublishAndReportStateBundleUseCase
             result = new BundlePublishResult.Transient(ex.Message);
         }
 
-        await _report.ExecuteAsync(result, cancellationToken).ConfigureAwait(false);
+        // Reporting is the last stop for a publish attempt, so it gets the
+        // same guard as the publish step: an unknown-variant bug in
+        // ReportBundlePublishUseCase, or a tray post that throws because the
+        // UI thread is already gone at shutdown, must not escape into a
+        // fire-and-forget caller with the outcome never logged anywhere.
+        // Cancellation still propagates -- it is not a failure to report.
+        try
+        {
+            await _report.ExecuteAsync(result, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "State bundle publish result {Result} could not be reported", result.GetType().Name);
+        }
+
         return result;
     }
 }

@@ -155,7 +155,20 @@ internal static class Program
         guard.StartListening();
 
         _ = orchestrator.StartAsync();
-        _ = bundleSyncerHandle.PublishNowAsync();
+
+        // Fire-and-forget, but observed: PublishAndReportStateBundleUseCase
+        // guards its own publish and report steps, so this should only ever
+        // fault on something neither guard anticipated. Attaching a
+        // faulted-only continuation is what stands between that residual
+        // case and a silently unobserved task exception -- the exact defect
+        // this project exists to remove, reintroduced at the one remaining
+        // unguarded call site if this were left bare.
+        var startupPublishLogger = loggerFactory.CreateLogger("StartupPublish");
+        _ = bundleSyncerHandle.PublishNowAsync().ContinueWith(
+            t => startupPublishLogger.LogError(t.Exception, "Startup state bundle publish threw"),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
 
         WinFormsApp.Run();
         return 0;
