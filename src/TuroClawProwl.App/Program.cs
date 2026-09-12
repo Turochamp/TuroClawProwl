@@ -15,6 +15,7 @@ using TuroClawProwl.Infrastructure.Gateway;
 using TuroClawProwl.Infrastructure.Git;
 using TuroClawProwl.Infrastructure.Logging;
 using TuroClawProwl.Infrastructure.Security;
+using TuroClawProwl.Infrastructure.Google;
 using TuroClawProwl.Infrastructure.Ssh;
 using TuroClawProwl.Infrastructure.Time;
 using TuroClawProwl.Infrastructure.Toast;
@@ -73,7 +74,8 @@ internal static class Program
         var toasts = new ToastNotificationsToastService();
 
         var sshTarget = new SshTarget(config.SshHost, config.SshUser);
-        var trackedPaths = TodayPathsResolver.Resolve(config, loggerFactory);
+        var hubRepoPath = BundleSourcePathsResolver.ResolveHubRepoPath(config);
+        var watchedPaths = BundleSourcePathsResolver.Resolve(config, loggerFactory);
 
         var healthUseCase = new HandleHealthPollUseCase(
             gatewayClient, clock, toasts, trayController,
@@ -89,7 +91,7 @@ internal static class Program
             loggerFactory.CreateLogger<OpenControlUiUseCase>());
         var restartUseCase = new RestartGatewayUseCase(sshTarget, sshRunner, toasts);
 
-        var trackedForOrchestrator = TodayPathsResolver.ToOrchestratorPairs(trackedPaths);
+        var trackedForOrchestrator = TodayPathsResolver.ToOrchestratorPairs(watchedPaths);
 
         using var orchestrator = new AppOrchestrator(
             config, healthUseCase, resolveTodayUseCase, pushUseCase,
@@ -97,12 +99,48 @@ internal static class Program
             trackedForOrchestrator,
             loggerFactory.CreateLogger<AppOrchestrator>());
 
-        using var todaySyncerHandle = new TodaySyncerHandle(gitRunner, toasts, loggerFactory);
-        todaySyncerHandle.Start(trackedPaths);
+        var publisherVersion = "TuroClawProwl/" +
+            (typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "0.0.0");
+        var bundleRequest = new StateBundleRequest(
+            hubRepoPath, publisherVersion, ConfigIntervals.EffectiveHeartbeatInterval(config));
+
+        var reportBundleUseCase = new ReportBundlePublishUseCase(
+            trayController, toasts, clock,
+            loggerFactory.CreateLogger<ReportBundlePublishUseCase>());
+
+        IBundlePublisher bundlePublisher = string.IsNullOrWhiteSpace(hubRepoPath)
+            ? new UnconfiguredBundlePublisher()
+            : new GitWorktreeBundlePublisher(
+                hubRepoPath,
+                BundleSourcePathsResolver.ResolveWorktreePath(config),
+                BundleSourcePathsResolver.ResolvePublishBranch(config),
+                logger: loggerFactory.CreateLogger<GitWorktreeBundlePublisher>());
+
+        var googleReader = new GwsWorkspaceReader(
+            string.IsNullOrWhiteSpace(config.GwsExecutablePath)
+                ? "C:/Users/micha/bin/gws.cmd"
+                : config.GwsExecutablePath,
+            loggerFactory.CreateLogger<GwsWorkspaceReader>());
+
+        var publishBundleUseCase = new PublishStateBundleUseCase(
+            new FileSystemSourceFileReader(),
+            new GitFileFactsReader(),
+            googleReader,
+            new JsonFileSnapshotStore(JsonFileSnapshotStore.DefaultDirectory()),
+            bundlePublisher,
+            clock,
+            loggerFactory.CreateLogger<PublishStateBundleUseCase>());
+
+        var publishAndReport = new PublishAndReportStateBundleUseCase(
+            publishBundleUseCase, reportBundleUseCase);
+
+        using var bundleSyncerHandle = new StateBundleSyncerHandle(
+            bundleRequest, publishAndReport, loggerFactory);
+        bundleSyncerHandle.Start(watchedPaths, ConfigIntervals.EffectiveSnapshotInterval(config));
 
         using var liveConfigApplier = new LiveConfigApplier(
             config, gatewayClient, openControlUiUseCase, restartUseCase,
-            orchestrator, todaySyncerHandle, loggerFactory);
+            orchestrator, bundleSyncerHandle, googleReader, loggerFactory);
         configStore.ConfigSaved += (_, c) => _ = liveConfigApplier.ApplyAsync(c);
 
         trayController.PushTodayFilesRequested += async (_, _) => await orchestrator.PushTodayFilesAsync();
@@ -116,6 +154,7 @@ internal static class Program
         guard.StartListening();
 
         _ = orchestrator.StartAsync();
+        _ = bundleSyncerHandle.PublishNowAsync();
 
         WinFormsApp.Run();
         return 0;
@@ -160,4 +199,17 @@ internal sealed class NullGatewayClient : IGatewayClient
 {
     public Task<GatewayPollResult> GetHealthAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult<GatewayPollResult>(new GatewayPollResult.Failure("gateway URL not configured"));
+}
+
+internal sealed class UnconfiguredBundlePublisher : IBundlePublisher
+{
+    public Task<string> GetSourceBranchAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult("unknown");
+
+    public Task<BundlePublishResult> PublishAsync(
+        BundlePayload payload,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<BundlePublishResult>(new BundlePublishResult.Misconfigured(
+            GitWorktreeBundlePublisher.SourceRepoSetting,
+            "the hub repo path is not configured"));
 }

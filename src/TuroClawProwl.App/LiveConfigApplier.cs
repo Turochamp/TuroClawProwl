@@ -4,6 +4,7 @@ using TuroClawProwl.Application;
 using TuroClawProwl.Application.Ports;
 using TuroClawProwl.Application.UseCases;
 using TuroClawProwl.Infrastructure.Gateway;
+using TuroClawProwl.Infrastructure.Google;
 
 namespace TuroClawProwl.App;
 
@@ -19,7 +20,8 @@ public sealed class LiveConfigApplier : IDisposable
     private readonly OpenControlUiUseCase _openControlUi;
     private readonly RestartGatewayUseCase _restartUseCase;
     private readonly AppOrchestrator _orchestrator;
-    private readonly TodaySyncerHandle _todaySyncerHandle;
+    private readonly StateBundleSyncerHandle _bundleSyncerHandle;
+    private readonly GwsWorkspaceReader? _googleReader;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<LiveConfigApplier> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -32,7 +34,8 @@ public sealed class LiveConfigApplier : IDisposable
         OpenControlUiUseCase openControlUi,
         RestartGatewayUseCase restartUseCase,
         AppOrchestrator orchestrator,
-        TodaySyncerHandle todaySyncerHandle,
+        StateBundleSyncerHandle bundleSyncerHandle,
+        GwsWorkspaceReader? googleReader,
         ILoggerFactory loggerFactory)
     {
         ArgumentNullException.ThrowIfNull(initialConfig);
@@ -40,7 +43,7 @@ public sealed class LiveConfigApplier : IDisposable
         ArgumentNullException.ThrowIfNull(openControlUi);
         ArgumentNullException.ThrowIfNull(restartUseCase);
         ArgumentNullException.ThrowIfNull(orchestrator);
-        ArgumentNullException.ThrowIfNull(todaySyncerHandle);
+        ArgumentNullException.ThrowIfNull(bundleSyncerHandle);
         ArgumentNullException.ThrowIfNull(loggerFactory);
 
         _current = initialConfig;
@@ -48,7 +51,8 @@ public sealed class LiveConfigApplier : IDisposable
         _openControlUi = openControlUi;
         _restartUseCase = restartUseCase;
         _orchestrator = orchestrator;
-        _todaySyncerHandle = todaySyncerHandle;
+        _bundleSyncerHandle = bundleSyncerHandle;
+        _googleReader = googleReader;
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<LiveConfigApplier>();
     }
@@ -93,18 +97,34 @@ public sealed class LiveConfigApplier : IDisposable
                 changes.Add("pollInterval");
             }
 
-            var todayChanged =
-                !string.Equals(previous.TodaySkillPath, newConfig.TodaySkillPath, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(previous.TodayCcaRoot, newConfig.TodayCcaRoot, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(previous.TodayCrmIndexPath, newConfig.TodayCrmIndexPath, StringComparison.OrdinalIgnoreCase);
-
-            if (todayChanged)
+            if (!string.Equals(previous.GwsExecutablePath, newConfig.GwsExecutablePath, StringComparison.OrdinalIgnoreCase))
             {
-                var newTrackedPaths = TodayPathsResolver.Resolve(newConfig, _loggerFactory);
-                await _todaySyncerHandle.RebuildAsync(newTrackedPaths, cancellationToken).ConfigureAwait(false);
+                _googleReader?.SetExecutablePath(newConfig.GwsExecutablePath);
+                changes.Add("gwsExecutablePath");
+            }
+
+            var sourcesChanged =
+                !string.Equals(previous.HubRepoPath, newConfig.HubRepoPath, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(previous.TodayCcaRoot, newConfig.TodayCcaRoot, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(previous.BundleWorktreePath, newConfig.BundleWorktreePath, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(previous.BundlePublishBranch, newConfig.BundlePublishBranch, StringComparison.Ordinal) ||
+                !string.Equals(previous.GwsExecutablePath, newConfig.GwsExecutablePath, StringComparison.OrdinalIgnoreCase) ||
+                previous.SnapshotInterval != newConfig.SnapshotInterval ||
+                previous.HeartbeatInterval != newConfig.HeartbeatInterval;
+
+            if (sourcesChanged)
+            {
+                var newPaths = BundleSourcePathsResolver.Resolve(newConfig, _loggerFactory);
+                await _bundleSyncerHandle
+                    .RebuildAsync(
+                        newPaths,
+                        ConfigIntervals.EffectiveSnapshotInterval(newConfig),
+                        ConfigIntervals.EffectiveHeartbeatInterval(newConfig),
+                        cancellationToken)
+                    .ConfigureAwait(false);
                 await _orchestrator.SetTrackedFilesAsync(
-                    TodayPathsResolver.ToOrchestratorPairs(newTrackedPaths)).ConfigureAwait(false);
-                changes.Add("today");
+                    TodayPathsResolver.ToOrchestratorPairs(newPaths)).ConfigureAwait(false);
+                changes.Add("bundleSources");
             }
 
             _current = newConfig;
@@ -134,58 +154,63 @@ public sealed class LiveConfigApplier : IDisposable
     public void Dispose() => _gate.Dispose();
 }
 
-// Owns the TodaySyncer lifetime so LiveConfigApplier can rebuild it
-// when Today config changes. Program.cs hands ownership here instead
-// of using `using var todaySyncer = ...` directly.
-public sealed class TodaySyncerHandle : IDisposable
+// Owns the StateBundleSyncer lifetime so LiveConfigApplier can rebuild it when
+// the hub path or publish settings change.
+public sealed class StateBundleSyncerHandle : IDisposable
 {
-    private readonly IGitRunner _git;
-    private readonly IToastService _toasts;
+    private readonly PublishAndReportStateBundleUseCase _publishAndReport;
     private readonly ILoggerFactory _loggerFactory;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private TodaySyncer? _current;
+    private StateBundleRequest _request;
+    private StateBundleSyncer? _current;
 
-    public TodaySyncerHandle(IGitRunner git, IToastService toasts, ILoggerFactory loggerFactory)
+    public StateBundleSyncerHandle(
+        StateBundleRequest request,
+        PublishAndReportStateBundleUseCase publishAndReport,
+        ILoggerFactory loggerFactory)
     {
-        ArgumentNullException.ThrowIfNull(git);
-        ArgumentNullException.ThrowIfNull(toasts);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(publishAndReport);
         ArgumentNullException.ThrowIfNull(loggerFactory);
 
-        _git = git;
-        _toasts = toasts;
+        _request = request;
+        _publishAndReport = publishAndReport;
         _loggerFactory = loggerFactory;
     }
 
-    public void Start(IReadOnlyList<string> trackedPaths)
+    // Started even with no watched paths: the interval trigger still has to
+    // refresh the cloud snapshots.
+    public void Start(IReadOnlyList<string> watchedPaths, TimeSpan snapshotInterval)
     {
-        ArgumentNullException.ThrowIfNull(trackedPaths);
-        if (trackedPaths.Count == 0) return;
+        ArgumentNullException.ThrowIfNull(watchedPaths);
 
-        _current = new TodaySyncer(trackedPaths, _git, _toasts, _loggerFactory.CreateLogger<TodaySyncer>());
+        _current = new StateBundleSyncer(
+            watchedPaths, _request, snapshotInterval, _publishAndReport,
+            _loggerFactory.CreateLogger<StateBundleSyncer>());
         _current.Start();
     }
 
-    public async Task RebuildAsync(IReadOnlyList<string> trackedPaths, CancellationToken cancellationToken)
+    public Task PublishNowAsync(CancellationToken cancellationToken = default) =>
+        _current?.PublishNowAsync(cancellationToken) ?? Task.CompletedTask;
+
+    public async Task RebuildAsync(
+        IReadOnlyList<string> watchedPaths,
+        TimeSpan snapshotInterval,
+        TimeSpan heartbeatInterval,
+        CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(trackedPaths);
+        ArgumentNullException.ThrowIfNull(watchedPaths);
 
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (_current is null)
-            {
-                if (trackedPaths.Count > 0) Start(trackedPaths);
-                return;
-            }
+            _request = _request with { HeartbeatInterval = heartbeatInterval };
 
-            if (trackedPaths.Count == 0)
-            {
-                _current.Dispose();
-                _current = null;
-                return;
-            }
-
-            await _current.RestartWithPathsAsync(trackedPaths, cancellationToken).ConfigureAwait(false);
+            // The syncer holds the request, so a changed heartbeat means a new
+            // syncer rather than a restart of the old one.
+            _current?.Dispose();
+            _current = null;
+            Start(watchedPaths, snapshotInterval);
         }
         finally
         {
