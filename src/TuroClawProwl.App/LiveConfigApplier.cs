@@ -209,11 +209,21 @@ public sealed class StateBundleSyncerHandle : IDisposable
             // The syncer holds the request, so a changed heartbeat means a new
             // syncer rather than a restart of the old one. The use case, the
             // git worktree and the heartbeat timestamp are shared with the
-            // replacement, so Dispose's drain (StateBundleSyncer.Dispose) is
-            // load-bearing here: it blocks until any publish this syncer
-            // still has in flight has finished, which is what stops the old
-            // and new syncers from ever running concurrent git operations
-            // against the same worktree.
+            // replacement. Dispose (StateBundleSyncer.Dispose) cancels the old
+            // syncer's in-flight publish and stops it from *waiting* -- it
+            // does not kill an already-spawned git subprocess
+            // (ProcessRunner.RunAsync cancels the wait on the process via
+            // WaitForExitAsync, not the process itself), so an abandoned
+            // `git push` can briefly keep running against the worktree after
+            // Dispose returns. What actually keeps the old and new syncers
+            // from colliding on that worktree is that Start() below does not
+            // publish immediately: the replacement's earliest publish is at
+            // least a 60s debounce after a watched file changes, or its
+            // first snapshot-interval tick -- a gap the abandoned subprocess
+            // has to finish naturally in. That makes Start() not publishing
+            // on its own load-bearing, not a cosmetic minor: making this
+            // method (or Start) publish right away would reopen the race
+            // this comment describes.
             _current?.Dispose();
             _current = null;
             Start(watchedPaths, snapshotInterval);

@@ -16,15 +16,18 @@ public sealed class StateBundleSyncer : IDisposable
     private static readonly TimeSpan DebounceWindow = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan MinimumSnapshotInterval = TimeSpan.FromMinutes(5);
 
-    // Bounds Dispose's drain (see Dispose). Long enough to cover a healthy
-    // publish's git add/commit/push and its gws task/calendar reads without
-    // false-positive abandonment; short enough that an app exit or a
-    // config-triggered rebuild that lands mid-publish is a brief pause, not
-    // a hang. Disposal also cancels _disposalCts first, so in the common
-    // case (the publish is simply waiting to post its result to a tray that
-    // can no longer pump) the drain finishes almost immediately and this
-    // timeout is only the fallback for a publish that does not unwind on
-    // cancellation, e.g. one stuck inside an unresponsive git/gws process.
+    // Bounds Dispose's drain (see Dispose). Cancelling _disposalCts first
+    // makes every awaited step in the publish chain unwind promptly,
+    // including a git/gws subprocess call -- ProcessRunner.RunAsync cancels
+    // the *wait* on the process via WaitForExitAsync, it does not kill the
+    // process -- so the drain finishes almost immediately in the common
+    // case regardless of whether the underlying git/gws work is still
+    // running in the background. This timeout is a fallback for the
+    // residual case: some await in the chain that does not unwind on
+    // cancellation at all. Ten seconds is short enough that an app exit or
+    // a config-triggered rebuild that lands mid-publish is a brief pause,
+    // not a hang, and long enough not to abandon that fallback case
+    // prematurely under normal load.
     private static readonly TimeSpan DrainTimeout = TimeSpan.FromSeconds(10);
 
     private readonly StateBundleRequest _request;
@@ -233,21 +236,26 @@ public sealed class StateBundleSyncer : IDisposable
         _watchers.Clear();
 
         // Drain, bounded by DrainTimeout: a publish that is already past
-        // WaitAsync and mid-flight must finish -- and hit its own finally's
-        // Release -- before the gate goes away, or that Release throws
+        // WaitAsync and mid-flight must reach its own finally's Release --
+        // before the gate goes away, or that Release throws
         // ObjectDisposedException, which would surface as a spurious error on
         // every app exit or config-triggered rebuild that lands mid-publish.
-        // The cancellation above should make this fast in the common case;
-        // the timeout is the fallback for a publish that does not unwind on
-        // cancellation (e.g. one stuck inside an unresponsive git/gws
-        // process) -- outliving the timeout is logged and the gate is
-        // disposed anyway, since blocking the UI thread forever is worse
-        // than an occasional abandoned-publish log line. This also means
-        // StateBundleSyncerHandle.RebuildAsync can rely on Dispose to
-        // guarantee this syncer's git work is finished (or abandoned) before
-        // the replacement, which shares the same publish use case and
-        // worktree, is started, so the two can never race the same worktree
-        // for longer than DrainTimeout.
+        // The cancellation above makes the awaiting chain unwind quickly in
+        // the common case -- it stops PublishNowAsync from *waiting*, it does
+        // not stop a git subprocess that publish already spawned
+        // (ProcessRunner.RunAsync cancels the wait on the process via
+        // WaitForExitAsync, not the process itself), so an abandoned
+        // `git push` can briefly keep running against the worktree after
+        // this drain returns. The timeout below is a fallback for the rarer
+        // case of an await that does not unwind on cancellation at all;
+        // outliving it is logged and the gate is disposed anyway, since
+        // blocking the UI thread forever is worse than an occasional
+        // abandoned-publish log line.
+        //
+        // This drain does NOT guarantee the old syncer's git work has
+        // stopped before StateBundleSyncerHandle.RebuildAsync starts the
+        // replacement -- see the comment at that call site for what actually
+        // keeps the two from colliding on the shared worktree.
         if (_publishGate.Wait(DrainTimeout))
         {
             _publishGate.Release();
