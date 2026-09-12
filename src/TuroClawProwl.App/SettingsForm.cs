@@ -31,6 +31,12 @@ public sealed class SettingsForm : Form
     private readonly TextBox _todaySkillPath = new() { Dock = DockStyle.Fill };
     private readonly TextBox _todayCcaRoot = new() { Dock = DockStyle.Fill };
     private readonly TextBox _todayCrmIndex = new() { Dock = DockStyle.Fill };
+    private readonly TextBox _hubRepoPath = new() { Dock = DockStyle.Fill };
+    private readonly TextBox _bundleWorktreePath = new() { Dock = DockStyle.Fill };
+    private readonly TextBox _bundlePublishBranch = new() { Dock = DockStyle.Fill };
+    private readonly NumericUpDown _snapshotMinutes = new() { Minimum = 5, Maximum = 1440, Value = 60, Width = 70 };
+    private readonly NumericUpDown _heartbeatMinutes = new() { Minimum = 15, Maximum = 10080, Value = 360, Width = 70 };
+    private readonly TextBox _gwsExecutablePath = new() { Dock = DockStyle.Fill };
 
     // Test buttons + status labels
     private readonly Button _testGatewayButton = new()
@@ -119,11 +125,13 @@ public sealed class SettingsForm : Form
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         root.Controls.Add(BuildGatewayGroup(), 0, 0);
         root.Controls.Add(BuildMonitoringGroup(), 0, 1);
         root.Controls.Add(BuildTodayGroup(), 0, 2);
+        root.Controls.Add(BuildBundleGroup(), 0, 3);
 
         var buttonRow = new FlowLayoutPanel
         {
@@ -186,6 +194,22 @@ public sealed class SettingsForm : Form
         AddField(grid, "SKILL.md:", _todaySkillPath);
         AddField(grid, "CCA_ROOT:", _todayCcaRoot);
         AddField(grid, "CRM index:", _todayCrmIndex);
+
+        group.Controls.Add(grid);
+        return group;
+    }
+
+    private GroupBox BuildBundleGroup()
+    {
+        var group = NewGroupBox("State bundle");
+        var grid = NewFieldGrid();
+
+        AddField(grid, "Hub repo:", _hubRepoPath);
+        AddField(grid, "Bundle worktree:", _bundleWorktreePath);
+        AddField(grid, "Publish branch:", _bundlePublishBranch);
+        AddField(grid, "gws path:", _gwsExecutablePath);
+        AddField(grid, "Snapshot interval (min):", _snapshotMinutes);
+        AddField(grid, "Heartbeat interval (min):", _heartbeatMinutes);
 
         group.Controls.Add(grid);
         return group;
@@ -270,6 +294,12 @@ public sealed class SettingsForm : Form
         _todaySkillPath.Text = config.TodaySkillPath;
         _todayCcaRoot.Text = config.TodayCcaRoot;
         _todayCrmIndex.Text = config.TodayCrmIndexPath;
+        _hubRepoPath.Text = config.HubRepoPath;
+        _bundleWorktreePath.Text = config.BundleWorktreePath;
+        _bundlePublishBranch.Text = config.BundlePublishBranch;
+        _gwsExecutablePath.Text = config.GwsExecutablePath;
+        _snapshotMinutes.Value = Math.Clamp((decimal)config.SnapshotInterval.TotalMinutes, 5, 1440);
+        _heartbeatMinutes.Value = Math.Clamp((decimal)config.HeartbeatInterval.TotalMinutes, 15, 10080);
 
         var token = await _tokenStore.GetTokenAsync();
         _token.Text = token ?? "";
@@ -377,6 +407,16 @@ public sealed class SettingsForm : Form
             TodaySkillPath = _todaySkillPath.Text.Trim(),
             TodayCcaRoot = _todayCcaRoot.Text.Trim(),
             TodayCrmIndexPath = _todayCrmIndex.Text.Trim(),
+            HubRepoPath = _hubRepoPath.Text.Trim(),
+            BundleWorktreePath = _bundleWorktreePath.Text.Trim(),
+            BundlePublishBranch = string.IsNullOrWhiteSpace(_bundlePublishBranch.Text)
+                ? "main"
+                : _bundlePublishBranch.Text.Trim(),
+            GwsExecutablePath = string.IsNullOrWhiteSpace(_gwsExecutablePath.Text)
+                ? "C:/Users/micha/bin/gws.cmd"
+                : _gwsExecutablePath.Text.Trim(),
+            SnapshotInterval = TimeSpan.FromMinutes((double)_snapshotMinutes.Value),
+            HeartbeatInterval = TimeSpan.FromMinutes((double)_heartbeatMinutes.Value),
         };
 
         await _configStore.SaveAsync(config);
