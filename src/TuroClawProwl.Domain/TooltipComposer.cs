@@ -76,4 +76,32 @@ public static class TooltipComposer
         var listed = string.Join(", ", repos.Take(MaxReposListedPerBucket));
         return $"{listed} +{repos.Length - MaxReposListedPerBucket} more";
     }
+
+    public static string Compose(
+        GatewayHealth gateway,
+        IReadOnlyCollection<TodayFileStatus> todayFiles,
+        PublishHealth publish,
+        DateTimeOffset asOf)
+    {
+        ArgumentNullException.ThrowIfNull(publish);
+
+        return Compose(gateway, todayFiles) + LineSeparator + ComposePublishLine(publish, asOf);
+    }
+
+    private static string ComposePublishLine(PublishHealth publish, DateTimeOffset asOf) => publish switch
+    {
+        PublishHealth.NeverPublished => "Bundle: not published yet",
+        PublishHealth.Healthy h =>
+            $"Bundle: published {BundleStaleness.FormatAge(BundleStaleness.AgeAt(asOf, h.LastPublishedAt))} ago",
+        PublishHealth.Failed { IsMisconfiguration: true } f =>
+            $"Bundle: misconfigured — check {f.SettingName}",
+        PublishHealth.Failed f =>
+            $"Bundle: publish failed — {Clip(f.Detail, 60)}",
+        _ => throw new ArgumentException(
+            $"Unknown publish health variant: {publish.GetType().Name}",
+            nameof(publish)),
+    };
+
+    private static string Clip(string text, int max) =>
+        text.Length <= max ? text : text[..max] + "…";
 }

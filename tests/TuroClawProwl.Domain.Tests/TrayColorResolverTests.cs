@@ -95,7 +95,7 @@ public class TrayColorResolverTests
     [Fact]
     public void Resolver_rejects_null_today_files()
     {
-        Action act = () => TrayColorResolver.Resolve(new GatewayHealth.NeverReached(), null!);
+        Action act = () => TrayColorResolver.Resolve(new GatewayHealth.NeverReached(), (IReadOnlyCollection<TodayFileStatus>)null!);
         act.Should().Throw<ArgumentNullException>();
     }
 }
