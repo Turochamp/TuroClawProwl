@@ -207,7 +207,13 @@ public sealed class StateBundleSyncerHandle : IDisposable
             _request = _request with { HeartbeatInterval = heartbeatInterval };
 
             // The syncer holds the request, so a changed heartbeat means a new
-            // syncer rather than a restart of the old one.
+            // syncer rather than a restart of the old one. The use case, the
+            // git worktree and the heartbeat timestamp are shared with the
+            // replacement, so Dispose's drain (StateBundleSyncer.Dispose) is
+            // load-bearing here: it blocks until any publish this syncer
+            // still has in flight has finished, which is what stops the old
+            // and new syncers from ever running concurrent git operations
+            // against the same worktree.
             _current?.Dispose();
             _current = null;
             Start(watchedPaths, snapshotInterval);

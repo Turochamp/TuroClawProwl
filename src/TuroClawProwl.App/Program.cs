@@ -132,7 +132,8 @@ internal static class Program
             loggerFactory.CreateLogger<PublishStateBundleUseCase>());
 
         var publishAndReport = new PublishAndReportStateBundleUseCase(
-            publishBundleUseCase, reportBundleUseCase);
+            publishBundleUseCase, reportBundleUseCase,
+            loggerFactory.CreateLogger<PublishAndReportStateBundleUseCase>());
 
         using var bundleSyncerHandle = new StateBundleSyncerHandle(
             bundleRequest, publishAndReport, loggerFactory);

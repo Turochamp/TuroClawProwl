@@ -169,4 +169,31 @@ public class PublishAndReportStateBundleUseCaseTests
 
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
+
+    [Fact]
+    public async Task A_publish_that_throws_is_reported_as_a_transient_failure_instead_of_escaping()
+    {
+        _publisher.Setup(p => p.PublishAsync(It.IsAny<BundlePayload>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("git executable not found on PATH"));
+
+        var result = await CreateUseCase().ExecuteAsync(Request());
+
+        result.Should().BeOfType<BundlePublishResult.Transient>()
+            .Which.Detail.Should().Be("git executable not found on PATH");
+        _trayStates.Should().ContainSingle().Subject.Should().BeOfType<PublishHealth.Failed>();
+        _toasted.Should().ContainSingle().Which.IsMisconfiguration.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task A_canceled_publish_propagates_without_being_reported_as_a_failure()
+    {
+        _publisher.Setup(p => p.PublishAsync(It.IsAny<BundlePayload>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        Func<Task> act = () => CreateUseCase().ExecuteAsync(Request());
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _trayStates.Should().BeEmpty();
+        _toasted.Should().BeEmpty();
+    }
 }

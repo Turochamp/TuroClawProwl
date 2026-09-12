@@ -201,6 +201,20 @@ public sealed class StateBundleSyncer : IDisposable
             w.Dispose();
         }
         _watchers.Clear();
+
+        // Drain before disposing the gate: a publish that is already past
+        // WaitAsync and mid-flight must finish -- and hit its own finally's
+        // Release -- before the gate goes away, or that Release throws
+        // ObjectDisposedException, which would surface as a spurious error on
+        // every app exit or config-triggered rebuild that lands mid-publish.
+        // This unbounded block mirrors the retired TodaySyncer's drain (it
+        // awaited instead, since Dispose there had no in-flight git work to
+        // wait past); it also means StateBundleSyncerHandle.RebuildAsync can
+        // rely on Dispose to guarantee this syncer's git work is finished
+        // before the replacement (which shares the same publish use case and
+        // worktree) starts, so the two can never race the same worktree.
+        _publishGate.Wait();
+        _publishGate.Release();
         _publishGate.Dispose();
     }
 }
