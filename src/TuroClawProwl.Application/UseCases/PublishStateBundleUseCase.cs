@@ -227,8 +227,31 @@ public sealed class PublishStateBundleUseCase
     {
         var reason = ReasonFor(read);
         collected.Failures.Add(new BundleFailure(id, reason));
-        _logger.LogWarning("Snapshot {Id} could not be refreshed: {Reason}", id, reason);
-        await Task.CompletedTask.ConfigureAwait(false);
+
+        var previous = await _snapshots.GetAsync(id, cancellationToken).ConfigureAwait(false);
+        if (previous is null)
+        {
+            _logger.LogWarning(
+                "Snapshot {Id} failed with no previous snapshot to retain: {Reason}", id, reason);
+            return;
+        }
+
+        // The retained snapshot keeps BOTH original timestamps, and the store is
+        // not rewritten. Advancing either would let a failed read look like a
+        // successful one, which is the failure this pipeline exists to remove.
+        collected.Files.Add(new BundleFile(bundlePath, previous.Content));
+        collected.Sources.Add(new BundleSource(
+            Id: id,
+            Path: apiPath,
+            BundlePath: bundlePath,
+            Modified: previous.ContentReadAt,
+            Verified: previous.VerifiedAt,
+            Committed: null,
+            Dirty: false));
+
+        _logger.LogWarning(
+            "Snapshot {Id} failed; retaining content from {ContentReadAt} last verified {VerifiedAt}: {Reason}",
+            id, previous.ContentReadAt, previous.VerifiedAt, reason);
     }
 
     private static string ReasonFor(GoogleReadResult read) => read switch

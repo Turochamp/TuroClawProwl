@@ -241,4 +241,141 @@ public class PublishStateBundleSnapshotTests
         var payloadPaths = _captured!.Files.Select(f => f.RelativePath).ToArray();
         _captured!.Manifest.Sources.Select(s => s.BundlePath).Should().BeEquivalentTo(payloadPaths);
     }
+
+    private void StoreExistingYneSnapshot(
+        string content, DateTimeOffset contentReadAt, DateTimeOffset verifiedAt) =>
+        _snapshots.Setup(s => s.GetAsync("tasks/yne", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new StoredSnapshot("tasks/yne", content, contentReadAt, verifiedAt));
+
+    private void FailYneRead() =>
+        _google.Setup(g => g.ReadTaskListAsync(GoogleSnapshotPlan.YneListId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleReadResult.NotAuthenticated("exit code 2"));
+
+    [Fact]
+    public async Task A_failed_read_retains_the_previous_snapshot_content()
+    {
+        StoreExistingYneSnapshot(
+            "{\"items\":[{\"title\":\"Yesterday\"}]}", Now.AddHours(-9), Now.AddHours(-1));
+        FailYneRead();
+
+        await CreateUseCase().ExecuteAsync(Request());
+
+        _captured!.Files.Single(f => f.RelativePath == "tasks/yne.json").Content
+            .Should().Be("{\"items\":[{\"title\":\"Yesterday\"}]}");
+    }
+
+    [Fact]
+    public async Task A_failed_read_advances_neither_modified_nor_verified()
+    {
+        var contentReadAt = Now.AddHours(-9);
+        var verifiedAt = Now.AddHours(-1);
+        StoreExistingYneSnapshot("{\"items\":[]}", contentReadAt, verifiedAt);
+        FailYneRead();
+
+        await CreateUseCase().ExecuteAsync(Request());
+
+        var yne = _captured!.Manifest.Sources.Single(s => s.Id == "tasks/yne");
+        yne.Modified.Should().Be(contentReadAt, "restamping would make stale data look fresh");
+        yne.Verified.Should().Be(
+            verifiedAt, "a failed read must not be able to look like a successful one");
+        yne.Modified.Should().NotBe(Now);
+        yne.Verified.Should().NotBe(Now);
+    }
+
+    [Fact]
+    public async Task A_failed_read_records_the_failure_and_keeps_the_retained_source_listed()
+    {
+        StoreExistingYneSnapshot("{\"items\":[]}", Now.AddHours(-9), Now.AddHours(-1));
+        FailYneRead();
+
+        await CreateUseCase().ExecuteAsync(Request());
+
+        _captured!.Manifest.Failures.Should().Contain(f => f.Id == "tasks/yne");
+        _captured!.Manifest.Sources.Should().Contain(s => s.Id == "tasks/yne");
+        _captured!.Manifest.Failures.Single(f => f.Id == "tasks/yne").Reason
+            .Should().Contain("not authenticated");
+    }
+
+    [Fact]
+    public async Task A_failed_read_does_not_overwrite_the_stored_snapshot()
+    {
+        StoreExistingYneSnapshot("{\"items\":[]}", Now.AddHours(-9), Now.AddHours(-1));
+        FailYneRead();
+
+        await CreateUseCase().ExecuteAsync(Request());
+
+        _saved.Should().NotContain(s => s.Id == "tasks/yne");
+    }
+
+    [Fact]
+    public async Task A_failed_read_with_no_previous_snapshot_records_only_a_failure()
+    {
+        _google.Setup(g => g.ReadTaskListAsync(GoogleSnapshotPlan.YneListId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleReadResult.Failure("connection reset"));
+
+        await CreateUseCase().ExecuteAsync(Request());
+
+        _captured!.Manifest.Failures.Should().Contain(f => f.Id == "tasks/yne" && f.Reason == "connection reset");
+        _captured!.Manifest.Sources.Should().NotContain(s => s.Id == "tasks/yne");
+        _captured!.Files.Should().NotContain(f => f.RelativePath == "tasks/yne.json");
+    }
+
+    [Fact]
+    public async Task One_failed_snapshot_does_not_stop_the_others_from_publishing()
+    {
+        _google.Setup(g => g.ReadTaskListAsync(GoogleSnapshotPlan.YneListId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleReadResult.Failure("connection reset"));
+
+        var result = await CreateUseCase().ExecuteAsync(Request());
+
+        result.Should().BeOfType<BundlePublishResult.Success>();
+        _captured!.Files.Select(f => f.RelativePath).Should().Contain(new[]
+        {
+            "tasks/my-tasks.json", "calendar/window.json", "registry.md",
+        });
+    }
+
+    [Fact]
+    public async Task A_byte_identical_refresh_keeps_modified_and_advances_verified()
+    {
+        var contentReadAt = Now.AddHours(-3);
+        StoreExistingYneSnapshot(
+            "{\"items\":[{\"title\":\"Ring Eirik\"}]}", contentReadAt, Now.AddHours(-1));
+
+        await CreateUseCase().ExecuteAsync(Request());
+
+        var yne = _captured!.Manifest.Sources.Single(s => s.Id == "tasks/yne");
+        yne.Modified.Should().Be(contentReadAt, "the data is the same age as before");
+        yne.Verified.Should().Be(Now, "but it has just been confirmed current");
+    }
+
+    [Fact]
+    public async Task A_byte_identical_refresh_stores_the_advanced_verification_time()
+    {
+        var contentReadAt = Now.AddHours(-3);
+        StoreExistingYneSnapshot(
+            "{\"items\":[{\"title\":\"Ring Eirik\"}]}", contentReadAt, Now.AddHours(-1));
+
+        await CreateUseCase().ExecuteAsync(Request());
+
+        var stored = _saved.Single(s => s.Id == "tasks/yne");
+        stored.ContentReadAt.Should().Be(contentReadAt);
+        stored.VerifiedAt.Should().Be(Now);
+    }
+
+    [Fact]
+    public async Task A_changed_refresh_advances_both_timestamps()
+    {
+        StoreExistingYneSnapshot("{\"items\":[]}", Now.AddHours(-3), Now.AddHours(-1));
+
+        await CreateUseCase().ExecuteAsync(Request());
+
+        var yne = _captured!.Manifest.Sources.Single(s => s.Id == "tasks/yne");
+        yne.Modified.Should().Be(Now);
+        yne.Verified.Should().Be(Now);
+
+        var stored = _saved.Single(s => s.Id == "tasks/yne");
+        stored.ContentReadAt.Should().Be(Now);
+        stored.VerifiedAt.Should().Be(Now);
+    }
 }
