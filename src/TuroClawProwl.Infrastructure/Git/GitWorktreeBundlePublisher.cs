@@ -139,14 +139,19 @@ public sealed class GitWorktreeBundlePublisher : IBundlePublisher
 
             await RunAsync(_sourceRepoPath, cancellationToken, "worktree", "prune").ConfigureAwait(false);
 
-            if (Directory.EnumerateFileSystemEntries(_worktreePath).Any())
+            var leftovers = Directory
+                .EnumerateFileSystemEntries(_worktreePath)
+                .Where(e => !string.Equals(Path.GetFileName(e), ".git", StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+
+            if (leftovers.Length > 0)
             {
                 return new BundlePublishResult.Misconfigured(
                     WorktreeSetting,
                     $"{_worktreePath} exists but is not a git worktree; point it at an unused directory");
             }
 
-            Directory.Delete(_worktreePath);
+            Directory.Delete(_worktreePath, recursive: true);
         }
 
         var parent = Path.GetDirectoryName(_worktreePath);
@@ -215,12 +220,33 @@ public sealed class GitWorktreeBundlePublisher : IBundlePublisher
     private async Task WriteBundleSourcesAsync(BundlePayload payload, CancellationToken cancellationToken)
     {
         var bundleRoot = BundleRoot();
+        var manifestPath = Path.Combine(bundleRoot, BundleLayout.ManifestFileName);
 
         // Rewriting from empty is what makes a retired CCA's state disappear from
-        // the bundle rather than linger forever.
+        // the bundle rather than linger forever -- but manifest.json is spared here.
+        // Sources are compared against HEAD (via the staged diff in PublishAsync)
+        // BEFORE the manifest is rewritten, so leaving the on-disk manifest exactly
+        // as last committed is what keeps that diff limited to source content;
+        // deleting it here would stage a manifest deletion on every publish and
+        // defeat the whole no-commit-when-unchanged check. WriteManifestAsync
+        // rewrites it afterward regardless.
         if (Directory.Exists(bundleRoot))
-            Directory.Delete(bundleRoot, recursive: true);
-        Directory.CreateDirectory(bundleRoot);
+        {
+            foreach (var entry in Directory.EnumerateFileSystemEntries(bundleRoot))
+            {
+                if (string.Equals(entry, manifestPath, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (Directory.Exists(entry))
+                    Directory.Delete(entry, recursive: true);
+                else
+                    File.Delete(entry);
+            }
+        }
+        else
+        {
+            Directory.CreateDirectory(bundleRoot);
+        }
 
         foreach (var file in payload.Files)
         {

@@ -37,7 +37,13 @@ public sealed class TempDirectory : IDisposable
         }
     }
 
-    private static void ForceDelete(string path)
+    // Public so tests can force-delete a directory that isn't this TempDirectory's
+    // own root -- e.g. a TempGitRepo's bare remote, whose loose objects git marks
+    // read-only. On Windows, plain Directory.Delete throws UnauthorizedAccessException
+    // on a read-only file regardless of directory permissions (unlike POSIX, where
+    // deleting only needs write access to the containing directory), so the read-only
+    // attribute must be cleared first.
+    public static void ForceDelete(string path)
     {
         foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
         {
