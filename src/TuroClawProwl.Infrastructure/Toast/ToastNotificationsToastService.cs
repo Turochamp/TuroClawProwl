@@ -109,4 +109,18 @@ public sealed class ToastNotificationsToastService : IToastService
 
     private static string Clip(string text, int max = 200) =>
         text.Length <= max ? text : text[..max] + "…";
+
+    public Task NotifyBundlePublishFailureAsync(
+        PublishHealth.Failed failure,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(failure);
+
+        var builder = new ToastContentBuilder();
+        foreach (var line in PublishFailureToast.Compose(failure))
+            builder.AddText(line);
+
+        builder.Show();
+        return Task.CompletedTask;
+    }
 }

@@ -20,4 +20,8 @@ public interface IToastService
         string title,
         string detail,
         CancellationToken cancellationToken = default);
+
+    Task NotifyBundlePublishFailureAsync(
+        PublishHealth.Failed failure,
+        CancellationToken cancellationToken = default);
 }
