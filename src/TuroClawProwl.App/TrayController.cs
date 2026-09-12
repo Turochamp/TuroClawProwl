@@ -16,6 +16,7 @@ public sealed class TrayController : ITrayView, IDisposable
 
     private GatewayHealth _gateway = new GatewayHealth.NeverReached();
     private IReadOnlyCollection<TodayFileStatus> _todayFiles = Array.Empty<TodayFileStatus>();
+    private PublishHealth _publish = new PublishHealth.NeverPublished();
 
     public event EventHandler? PushTodayFilesRequested;
     public event EventHandler? OpenControlUiRequested;
@@ -99,10 +100,20 @@ public sealed class TrayController : ITrayView, IDisposable
         }, cancellationToken);
     }
 
+    public Task SetPublishHealthAsync(PublishHealth publish, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(publish);
+        return _dispatcher.PostAsync(() =>
+        {
+            _publish = publish;
+            Refresh();
+        }, cancellationToken);
+    }
+
     private void Refresh()
     {
-        var color = TrayColorResolver.Resolve(_gateway, _todayFiles);
-        var tooltip = TooltipComposer.Compose(_gateway, _todayFiles);
+        var color = TrayColorResolver.Resolve(_gateway, _publish);
+        var tooltip = TooltipComposer.Compose(_gateway, _todayFiles, _publish, DateTimeOffset.UtcNow);
 
         _notifyIcon.Icon?.Dispose();
         _notifyIcon.Icon = TrayIconFactory.ForColor(color);
