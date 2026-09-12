@@ -176,6 +176,7 @@ public sealed class GitWorktreeBundlePublisher : IBundlePublisher
             "worktree", "add", "--detach", _worktreePath, _publishBranch).ConfigureAwait(false);
         if (add.ExitCode == 0)
         {
+            await WriteOwnershipMarkerAsync(cancellationToken).ConfigureAwait(false);
             _logger.LogInformation(
                 "Created the bundle worktree at {Worktree} detached at {Branch}",
                 _worktreePath, _publishBranch);
@@ -200,31 +201,103 @@ public sealed class GitWorktreeBundlePublisher : IBundlePublisher
         return new BundlePublishResult.Transient(error);
     }
 
+    // The file that marks a linked worktree as one THIS publisher created, living
+    // inside the worktree's own private git-dir (.git/worktrees/<name>/ for a linked
+    // worktree) rather than its working-tree content. That placement matters: content
+    // placed inside the working tree itself would be wiped by PinToPublishTipAsync's
+    // `git clean -fd` on every publish after the first, and git never runs `clean`
+    // against its own admin directories.
+    private const string OwnershipMarkerFileName = "turoclawprowl-bundle-publisher";
+
     // A directory can pass `rev-parse --is-inside-work-tree` for ANY git repository,
-    // not just one this publisher created. Adoption additionally requires that the
-    // working tree's own toplevel is exactly _worktreePath (not some ancestor or
-    // unrelated checkout), and that its git-common-dir -- the shared .git a linked
-    // worktree points back at -- resolves inside _sourceRepoPath. Both must hold
-    // before PinToPublishTipAsync is allowed to fetch/reset --hard/clean this path.
+    // not just one this publisher created -- and that includes the source repo's own
+    // main working tree (its git-dir and git-common-dir are the same path, and its
+    // common-dir trivially resolves "inside itself"), and any OTHER linked worktree of
+    // the source repo, made the same way (`worktree add --detach <path> <branch>`) by
+    // the user for their own purposes rather than by this publisher. Git's own
+    // bookkeeping cannot tell those two cases apart -- a user-made worktree at the
+    // configured path is, structurally, indistinguishable from one this publisher
+    // made, down to appearing identically in `worktree list --porcelain` (verified
+    // directly: both pass toplevel, git-dir-vs-common-dir and list-membership
+    // identically). Adopting either lets PinToPublishTipAsync fetch/reset
+    // --hard/clean a working tree that isn't this publisher's to touch. Adoption
+    // therefore requires ALL of:
+    //   1. _worktreePath is not the source repo root itself.
+    //   2. Its own toplevel is exactly _worktreePath (not an ancestor or unrelated checkout).
+    //   3. It is a LINKED worktree (git-dir != git-common-dir), not a main working tree.
+    //   4. Its git-common-dir resolves inside _sourceRepoPath.
+    //   5. git itself lists _worktreePath as one of _sourceRepoPath's worktrees.
+    //   6. It carries this publisher's own ownership marker for this exact source repo
+    //      -- the one structural fact git cannot supply on its own.
     private async Task<bool> IsThisPublishersWorktreeAsync(CancellationToken cancellationToken)
     {
+        if (PathsEqual(_worktreePath, _sourceRepoPath))
+            return false;
+
         var toplevel = await RunAsync(_worktreePath, cancellationToken, "rev-parse", "--show-toplevel")
             .ConfigureAwait(false);
         if (toplevel.ExitCode != 0 || !PathsEqual(toplevel.StdOut.Trim(), _worktreePath))
             return false;
 
+        var gitDir = await RunAsync(_worktreePath, cancellationToken, "rev-parse", "--git-dir")
+            .ConfigureAwait(false);
         var commonDir = await RunAsync(_worktreePath, cancellationToken, "rev-parse", "--git-common-dir")
             .ConfigureAwait(false);
-        if (commonDir.ExitCode != 0)
+        if (gitDir.ExitCode != 0 || commonDir.ExitCode != 0)
             return false;
 
-        var commonDirPath = commonDir.StdOut.Trim();
-        var commonDirFull = Path.IsPathRooted(commonDirPath)
-            ? commonDirPath
-            : Path.GetFullPath(Path.Combine(_worktreePath, commonDirPath));
+        var gitDirFull = ResolveAgainstWorktree(gitDir.StdOut.Trim());
+        var commonDirFull = ResolveAgainstWorktree(commonDir.StdOut.Trim());
 
-        return IsWithin(commonDirFull, _sourceRepoPath);
+        // A main working tree (the source repo's own root, or any other repo's root)
+        // has git-dir == git-common-dir; only a linked worktree differs.
+        if (PathsEqual(gitDirFull, commonDirFull))
+            return false;
+
+        if (!IsWithin(commonDirFull, _sourceRepoPath))
+            return false;
+
+        var list = await RunAsync(_sourceRepoPath, cancellationToken, "worktree", "list", "--porcelain")
+            .ConfigureAwait(false);
+        if (list.ExitCode != 0)
+            return false;
+
+        if (!ParseWorktreeListPaths(list.StdOut).Any(path => PathsEqual(path, _worktreePath)))
+            return false;
+
+        var markerPath = Path.Combine(gitDirFull, OwnershipMarkerFileName);
+        if (!File.Exists(markerPath))
+            return false;
+
+        var marker = await File.ReadAllTextAsync(markerPath, cancellationToken).ConfigureAwait(false);
+        return PathsEqual(marker.Trim(), _sourceRepoPath);
     }
+
+    // Written immediately after this publisher creates a worktree, so a later publish
+    // can prove the worktree at _worktreePath is one it made, not merely one that
+    // happens to satisfy every structural git check above.
+    private async Task WriteOwnershipMarkerAsync(CancellationToken cancellationToken)
+    {
+        var gitDir = await RunAsync(_worktreePath, cancellationToken, "rev-parse", "--git-dir")
+            .ConfigureAwait(false);
+        if (gitDir.ExitCode != 0)
+            return; // Best-effort: a later publish will simply fail to adopt and recreate the worktree.
+
+        var gitDirFull = ResolveAgainstWorktree(gitDir.StdOut.Trim());
+        await File.WriteAllTextAsync(
+            Path.Combine(gitDirFull, OwnershipMarkerFileName), _sourceRepoPath, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private string ResolveAgainstWorktree(string path) =>
+        Path.IsPathRooted(path) ? path : Path.GetFullPath(Path.Combine(_worktreePath, path));
+
+    private static IEnumerable<string> ParseWorktreeListPaths(string porcelain) =>
+        porcelain
+            .Split('\n')
+            .Select(line => line.TrimEnd('\r'))
+            .Where(line => line.StartsWith("worktree ", StringComparison.Ordinal))
+            .Select(line => line["worktree ".Length..].Trim());
 
     // Normalizes away git's forward-slash output, trailing separators and short/long
     // form differences so path comparisons are not fooled by cosmetic differences.

@@ -521,6 +521,12 @@ public class GitWorktreeBundlePublisherTests
         using var repo = new TempGitRepo();
         using var unrelated = new TempGitRepo();
         unrelated.Commit("unrelated work", "notes.md", "# not ours");
+        // Without an untracked file, this repo's HEAD already sits exactly where a
+        // `reset --hard` would land and `clean -fd` has nothing to remove, so
+        // `status --porcelain` would read empty both before and after even if fetch,
+        // reset and clean had all actually run against it. The scratch file is what
+        // makes "untouched" an assertion that could actually fail.
+        await File.WriteAllTextAsync(Path.Combine(unrelated.Path, "scratch.md"), "# unrelated scratch");
         var insideUnrelatedRepo = Path.Combine(unrelated.Path, "bundle-worktree");
         Directory.CreateDirectory(insideUnrelatedRepo);
         var publisher = new GitWorktreeBundlePublisher(repo.Path, insideUnrelatedRepo, "main");
@@ -534,5 +540,56 @@ public class GitWorktreeBundlePublisherTests
 
         GitCli.Read(unrelated.Path, "rev-parse", "HEAD").Should().Be(headBefore);
         GitCli.Read(unrelated.Path, "status", "--porcelain").Should().Be(statusBefore);
+        File.Exists(Path.Combine(unrelated.Path, "scratch.md")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task The_source_repo_root_itself_is_reported_as_a_misconfiguration_and_leaves_it_untouched()
+    {
+        using var repo = new TempGitRepo();
+        repo.SetUpBareRemoteAndPush();
+        repo.Run("checkout", "-b", "feature/humanize-design");
+        repo.WriteFile("scratch.md", "# uncommitted scratch");
+        // bundleWorktreePath pointed at the source repo's own root -- the exact
+        // catastrophe round 1 was meant to close, reached from a different angle: the
+        // repo root itself satisfies "toplevel == worktreePath" just as well as a
+        // subdirectory does, and its git-common-dir trivially resolves "inside itself".
+        var publisher = new GitWorktreeBundlePublisher(repo.Path, repo.Path, "main");
+        var headBefore = GitCli.Read(repo.Path, "rev-parse", "HEAD");
+        var statusBefore = GitCli.Read(repo.Path, "status", "--porcelain");
+
+        var result = await publisher.PublishAsync(PayloadOn("feature/humanize-design"));
+
+        var misconfigured = result.Should().BeOfType<BundlePublishResult.Misconfigured>().Subject;
+        misconfigured.SettingName.Should().Be(GitWorktreeBundlePublisher.WorktreeSetting);
+
+        GitCli.Read(repo.Path, "rev-parse", "--abbrev-ref", "HEAD").Should().Be("feature/humanize-design");
+        GitCli.Read(repo.Path, "rev-parse", "HEAD").Should().Be(headBefore);
+        GitCli.Read(repo.Path, "status", "--porcelain").Should().Be(statusBefore);
+        (await File.ReadAllTextAsync(Path.Combine(repo.Path, "scratch.md")))
+            .Should().Be("# uncommitted scratch");
+    }
+
+    [Fact]
+    public async Task A_second_linked_worktree_the_user_created_is_reported_as_a_misconfiguration_and_leaves_it_untouched()
+    {
+        using var repo = new TempGitRepo();
+        repo.SetUpBareRemoteAndPush();
+        using var home = new TempDirectory();
+        // A worktree the USER created for their own purposes -- not one this publisher
+        // made -- satisfies every check so far (real linked worktree, common-dir inside
+        // the source repo, correct toplevel). Only membership in the source repo's
+        // known worktree list, checked against this exact path, tells them apart.
+        var usersOwnWorktree = Path.Combine(home.Path, "users-own-worktree");
+        GitCli.Read(repo.Path, "worktree", "add", "--detach", usersOwnWorktree, "main");
+        await File.WriteAllTextAsync(Path.Combine(usersOwnWorktree, "scratch.md"), "# the user's own scratch");
+        var publisher = new GitWorktreeBundlePublisher(repo.Path, usersOwnWorktree, "main");
+
+        var result = await publisher.PublishAsync(PayloadOn("main"));
+
+        var misconfigured = result.Should().BeOfType<BundlePublishResult.Misconfigured>().Subject;
+        misconfigured.SettingName.Should().Be(GitWorktreeBundlePublisher.WorktreeSetting);
+
+        File.Exists(Path.Combine(usersOwnWorktree, "scratch.md")).Should().BeTrue();
     }
 }
