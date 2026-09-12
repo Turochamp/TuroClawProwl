@@ -86,4 +86,24 @@ public class GitFileFactsReaderTests
 
         await act.Should().ThrowAsync<ArgumentException>();
     }
+
+    [Fact]
+    public async Task A_file_inside_a_linked_worktree_is_found_via_its_git_file()
+    {
+        using var repo = new TempGitRepo();
+        repo.Commit("add state", "STATE.md", "# state");
+        using var home = new TempDirectory();
+        var worktreePath = Path.Combine(home.Path, "linked-worktree");
+
+        GitCli.Read(repo.Path, "worktree", "add", "--detach", worktreePath, "HEAD");
+        File.WriteAllText(Path.Combine(worktreePath, "STATE.md"), "# state, from the worktree");
+        GitCli.Read(worktreePath, "add", "STATE.md");
+        GitCli.Read(worktreePath, "commit", "-m", "edit state from the linked worktree");
+
+        var facts = await new GitFileFactsReader()
+            .GetFileFactsAsync(Path.Combine(worktreePath, "STATE.md"));
+
+        facts.InRepository.Should().BeTrue();
+        facts.LastCommitAuthorDate.Should().NotBeNull();
+    }
 }
