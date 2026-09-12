@@ -135,7 +135,21 @@ public sealed class GitWorktreeBundlePublisher : IBundlePublisher
             var inside = await RunAsync(_worktreePath, cancellationToken, "rev-parse", "--is-inside-work-tree")
                 .ConfigureAwait(false);
             if (inside.ExitCode == 0 && inside.StdOut.Trim() == "true")
-                return null;
+            {
+                if (await IsThisPublishersWorktreeAsync(cancellationToken).ConfigureAwait(false))
+                    return null;
+
+                // Some OTHER git working tree occupies this path -- possibly the
+                // user's own source repo, if bundleWorktreePath was misconfigured to
+                // point inside it. PinToPublishTipAsync fetches, hard-resets and
+                // cleans whatever is checked out at _worktreePath, so adopting a
+                // foreign working tree here would discard someone else's commits and
+                // uncommitted files. Refuse without touching anything.
+                return new BundlePublishResult.Misconfigured(
+                    WorktreeSetting,
+                    $"{_worktreePath} is an existing git working tree that does not belong to this " +
+                    "publisher (it is not a worktree of " + _sourceRepoPath + "); point it at an unused directory");
+            }
 
             await RunAsync(_sourceRepoPath, cancellationToken, "worktree", "prune").ConfigureAwait(false);
 
@@ -184,6 +198,49 @@ public sealed class GitWorktreeBundlePublisher : IBundlePublisher
         }
 
         return new BundlePublishResult.Transient(error);
+    }
+
+    // A directory can pass `rev-parse --is-inside-work-tree` for ANY git repository,
+    // not just one this publisher created. Adoption additionally requires that the
+    // working tree's own toplevel is exactly _worktreePath (not some ancestor or
+    // unrelated checkout), and that its git-common-dir -- the shared .git a linked
+    // worktree points back at -- resolves inside _sourceRepoPath. Both must hold
+    // before PinToPublishTipAsync is allowed to fetch/reset --hard/clean this path.
+    private async Task<bool> IsThisPublishersWorktreeAsync(CancellationToken cancellationToken)
+    {
+        var toplevel = await RunAsync(_worktreePath, cancellationToken, "rev-parse", "--show-toplevel")
+            .ConfigureAwait(false);
+        if (toplevel.ExitCode != 0 || !PathsEqual(toplevel.StdOut.Trim(), _worktreePath))
+            return false;
+
+        var commonDir = await RunAsync(_worktreePath, cancellationToken, "rev-parse", "--git-common-dir")
+            .ConfigureAwait(false);
+        if (commonDir.ExitCode != 0)
+            return false;
+
+        var commonDirPath = commonDir.StdOut.Trim();
+        var commonDirFull = Path.IsPathRooted(commonDirPath)
+            ? commonDirPath
+            : Path.GetFullPath(Path.Combine(_worktreePath, commonDirPath));
+
+        return IsWithin(commonDirFull, _sourceRepoPath);
+    }
+
+    // Normalizes away git's forward-slash output, trailing separators and short/long
+    // form differences so path comparisons are not fooled by cosmetic differences.
+    private static string NormalizeDirectory(string path) =>
+        Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+    private static bool PathsEqual(string a, string b) =>
+        string.Equals(NormalizeDirectory(a), NormalizeDirectory(b), StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsWithin(string candidate, string root)
+    {
+        var normalizedCandidate = NormalizeDirectory(candidate);
+        var normalizedRoot = NormalizeDirectory(root);
+        return normalizedCandidate.Equals(normalizedRoot, StringComparison.OrdinalIgnoreCase) ||
+            normalizedCandidate.StartsWith(
+                normalizedRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<BundlePublishResult?> PinToPublishTipAsync(CancellationToken cancellationToken)

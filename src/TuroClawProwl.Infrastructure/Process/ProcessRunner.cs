@@ -44,6 +44,14 @@ internal static class ProcessRunner
         foreach (var arg in args)
             psi.ArgumentList.Add(arg);
 
+        // Every caller in this solution parses git's stdout/stderr text (e.g. matching
+        // "not a git repository" to classify a failure). Git's messages are localized,
+        // and gettext's precedence is LANGUAGE > LC_ALL > LC_MESSAGES > LANG, so LC_ALL
+        // alone is not enough -- LANGUAGE must also be cleared, or a translated
+        // environment silently breaks every substring match in the solution.
+        psi.Environment["LC_ALL"] = "C";
+        psi.Environment.Remove("LANGUAGE");
+
         return psi;
     }
 }

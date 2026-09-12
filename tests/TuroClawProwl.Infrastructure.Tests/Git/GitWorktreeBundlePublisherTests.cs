@@ -483,4 +483,56 @@ public class GitWorktreeBundlePublisherTests
 
         result.Should().NotBeOfType<BundlePublishResult.Success>();
     }
+
+    [Fact]
+    public async Task A_worktree_path_inside_the_source_repos_own_working_tree_is_reported_as_a_misconfiguration_and_leaves_it_untouched()
+    {
+        using var repo = new TempGitRepo();
+        repo.SetUpBareRemoteAndPush();
+        repo.Run("checkout", "-b", "feature/humanize-design");
+        repo.WriteFile("scratch.md", "# uncommitted scratch");
+        // A plain subdirectory of the source repo's own working tree still reports
+        // `rev-parse --is-inside-work-tree` as true -- it never had to be created by
+        // `git worktree add`. This is exactly the misconfiguration that would let
+        // PinToPublishTipAsync fetch/reset --hard/clean the user's own checkout.
+        var insideSourceRepo = Path.Combine(repo.Path, "bundle-worktree");
+        Directory.CreateDirectory(insideSourceRepo);
+        var publisher = new GitWorktreeBundlePublisher(repo.Path, insideSourceRepo, "main");
+        var headBefore = GitCli.Read(repo.Path, "rev-parse", "HEAD");
+        var statusBefore = GitCli.Read(repo.Path, "status", "--porcelain");
+
+        var result = await publisher.PublishAsync(PayloadOn("feature/humanize-design"));
+
+        var misconfigured = result.Should().BeOfType<BundlePublishResult.Misconfigured>().Subject;
+        misconfigured.SettingName.Should().Be(GitWorktreeBundlePublisher.WorktreeSetting);
+
+        // The data-loss regression: the user's branch, history and uncommitted file
+        // must all still be exactly as they were -- no fetch, reset or clean occurred.
+        GitCli.Read(repo.Path, "rev-parse", "--abbrev-ref", "HEAD").Should().Be("feature/humanize-design");
+        GitCli.Read(repo.Path, "rev-parse", "HEAD").Should().Be(headBefore);
+        GitCli.Read(repo.Path, "status", "--porcelain").Should().Be(statusBefore);
+        (await File.ReadAllTextAsync(Path.Combine(repo.Path, "scratch.md")))
+            .Should().Be("# uncommitted scratch");
+    }
+
+    [Fact]
+    public async Task A_worktree_path_inside_an_unrelated_git_repository_is_reported_as_a_misconfiguration_and_leaves_it_untouched()
+    {
+        using var repo = new TempGitRepo();
+        using var unrelated = new TempGitRepo();
+        unrelated.Commit("unrelated work", "notes.md", "# not ours");
+        var insideUnrelatedRepo = Path.Combine(unrelated.Path, "bundle-worktree");
+        Directory.CreateDirectory(insideUnrelatedRepo);
+        var publisher = new GitWorktreeBundlePublisher(repo.Path, insideUnrelatedRepo, "main");
+        var headBefore = GitCli.Read(unrelated.Path, "rev-parse", "HEAD");
+        var statusBefore = GitCli.Read(unrelated.Path, "status", "--porcelain");
+
+        var result = await publisher.PublishAsync(PayloadOn("main"));
+
+        var misconfigured = result.Should().BeOfType<BundlePublishResult.Misconfigured>().Subject;
+        misconfigured.SettingName.Should().Be(GitWorktreeBundlePublisher.WorktreeSetting);
+
+        GitCli.Read(unrelated.Path, "rev-parse", "HEAD").Should().Be(headBefore);
+        GitCli.Read(unrelated.Path, "status", "--porcelain").Should().Be(statusBefore);
+    }
 }
