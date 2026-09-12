@@ -56,41 +56,24 @@ public sealed class PublishStateBundleUseCase
 
         var collected = new Collected();
 
-        var registry = await CollectAsync(
-            request.HubRepoPath,
-            BundleLayout.RegistrySourceId,
-            BundleLayout.RegistryRelativePath,
-            BundleLayout.RegistryBundlePath,
-            collected,
-            cancellationToken).ConfigureAwait(false);
+        var fixedSources = BundleSourcePlan.FixedSources(localNow);
+        string? registry = null;
 
-        await CollectAsync(
-            request.HubRepoPath,
-            BundleLayout.CrmIndexSourceId,
-            BundleLayout.CrmIndexRelativePath,
-            BundleLayout.CrmIndexBundlePath,
-            collected,
-            cancellationToken).ConfigureAwait(false);
+        foreach (var item in fixedSources)
+        {
+            var content = await CollectAsync(
+                request.HubRepoPath, item, collected, cancellationToken).ConfigureAwait(false);
 
-        await CollectAsync(
-            request.HubRepoPath,
-            BundleLayout.WeeklySourceId(localNow),
-            BundleLayout.WeeklyRelativePath(localNow),
-            BundleLayout.WeeklyBundlePath(localNow),
-            collected,
-            cancellationToken).ConfigureAwait(false);
+            if (item.Id == BundleLayout.RegistrySourceId)
+                registry = content;
+        }
 
         if (registry is not null)
         {
-            foreach (var entry in RegistryParser.ParseActiveSet(registry))
+            foreach (var item in BundleSourcePlan.FromRegistry(registry))
             {
                 await CollectAsync(
-                    request.HubRepoPath,
-                    BundleLayout.CcaSourceId(entry.Name),
-                    entry.StateFileRelativePath,
-                    BundleLayout.CcaBundlePath(entry.Name),
-                    collected,
-                    cancellationToken).ConfigureAwait(false);
+                    request.HubRepoPath, item, collected, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -159,15 +142,13 @@ public sealed class PublishStateBundleUseCase
 
     private async Task<string?> CollectAsync(
         string hubRepoPath,
-        string id,
-        string sourceRelativePath,
-        string bundleRelativePath,
+        BundleSourcePlanItem item,
         Collected collected,
         CancellationToken cancellationToken)
     {
         var absolute = Path.Combine(
             hubRepoPath,
-            sourceRelativePath.Replace('/', Path.DirectorySeparatorChar));
+            item.SourceRelativePath.Replace('/', Path.DirectorySeparatorChar));
 
         var read = await _files.ReadAsync(absolute, cancellationToken).ConfigureAwait(false);
         if (read is not SourceReadResult.Found found)
@@ -177,22 +158,22 @@ public sealed class PublishStateBundleUseCase
                 SourceReadResult.Missing => "missing",
                 SourceReadResult.Unreadable u => u.Error,
                 _ => throw new ArgumentException(
-                    $"Unknown source read result variant: {read.GetType().Name}", nameof(id)),
+                    $"Unknown source read result variant: {read.GetType().Name}", nameof(item)),
             };
 
-            collected.Failures.Add(new BundleFailure(id, reason));
+            collected.Failures.Add(new BundleFailure(item.Id, reason));
             _logger.LogWarning(
-                "State bundle source {Id} unavailable at {Path}: {Reason}", id, absolute, reason);
+                "State bundle source {Id} unavailable at {Path}: {Reason}", item.Id, absolute, reason);
             return null;
         }
 
         var facts = await _gitFacts.GetFileFactsAsync(absolute, cancellationToken).ConfigureAwait(false);
 
-        collected.Files.Add(new BundleFile(bundleRelativePath, found.Content));
+        collected.Files.Add(new BundleFile(item.BundleRelativePath, found.Content));
         collected.Sources.Add(new BundleSource(
-            Id: id,
-            Path: sourceRelativePath,
-            BundlePath: bundleRelativePath,
+            Id: item.Id,
+            Path: item.SourceRelativePath,
+            BundlePath: item.BundleRelativePath,
             Modified: found.LastModified,
             // A file source is confirmed current by the act of reading it, so the
             // two timestamps are the same value and the renderer needs no branch.
