@@ -136,19 +136,36 @@ public sealed class GitWorktreeBundlePublisher : IBundlePublisher
                 .ConfigureAwait(false);
             if (inside.ExitCode == 0 && inside.StdOut.Trim() == "true")
             {
-                if (await IsThisPublishersWorktreeAsync(cancellationToken).ConfigureAwait(false))
-                    return null;
-
-                // Some OTHER git working tree occupies this path -- possibly the
-                // user's own source repo, if bundleWorktreePath was misconfigured to
-                // point inside it. PinToPublishTipAsync fetches, hard-resets and
-                // cleans whatever is checked out at _worktreePath, so adopting a
-                // foreign working tree here would discard someone else's commits and
+                // PinToPublishTipAsync fetches, hard-resets and cleans whatever is
+                // checked out at _worktreePath, so adopting a working tree that isn't
+                // this publisher's own would discard someone else's commits and
                 // uncommitted files. Refuse without touching anything.
-                return new BundlePublishResult.Misconfigured(
-                    WorktreeSetting,
-                    $"{_worktreePath} is an existing git working tree that does not belong to this " +
-                    "publisher (it is not a worktree of " + _sourceRepoPath + "); point it at an unused directory");
+                var ownership = await DetermineWorktreeOwnershipAsync(cancellationToken).ConfigureAwait(false);
+                switch (ownership)
+                {
+                    case WorktreeOwnership.Owned:
+                        return null;
+
+                    case WorktreeOwnership.MissingOrInvalidMarker:
+                        // Structurally a real, registered linked worktree of this exact
+                        // source repo -- but this publisher never marked it as its own
+                        // (or the marker is empty/unreadable/for a different repo).
+                        // Name the actual remedy: it is a dead end otherwise, since
+                        // adoption is the only path that reuses an existing directory.
+                        return new BundlePublishResult.Misconfigured(
+                            WorktreeSetting,
+                            $"{_worktreePath} is a linked worktree of {_sourceRepoPath}, but is not " +
+                            "recognized as this publisher's own (its ownership marker is missing, " +
+                            "unreadable, empty, or names a different repository); delete this worktree " +
+                            "or point bundleWorktreePath at a different, unused directory");
+
+                    default:
+                        return new BundlePublishResult.Misconfigured(
+                            WorktreeSetting,
+                            $"{_worktreePath} is an existing git working tree that does not belong to this " +
+                            "publisher (it is not a worktree of " + _sourceRepoPath +
+                            "); point it at an unused directory");
+                }
             }
 
             await RunAsync(_sourceRepoPath, cancellationToken, "worktree", "prune").ConfigureAwait(false);
@@ -176,7 +193,10 @@ public sealed class GitWorktreeBundlePublisher : IBundlePublisher
             "worktree", "add", "--detach", _worktreePath, _publishBranch).ConfigureAwait(false);
         if (add.ExitCode == 0)
         {
-            await WriteOwnershipMarkerAsync(cancellationToken).ConfigureAwait(false);
+            var markerFailure = await WriteOwnershipMarkerAsync(cancellationToken).ConfigureAwait(false);
+            if (markerFailure is not null)
+                return markerFailure;
+
             _logger.LogInformation(
                 "Created the bundle worktree at {Worktree} detached at {Branch}",
                 _worktreePath, _publishBranch);
@@ -207,7 +227,23 @@ public sealed class GitWorktreeBundlePublisher : IBundlePublisher
     // placed inside the working tree itself would be wiped by PinToPublishTipAsync's
     // `git clean -fd` on every publish after the first, and git never runs `clean`
     // against its own admin directories.
-    private const string OwnershipMarkerFileName = "turoclawprowl-bundle-publisher";
+    // internal (not private) purely so tests can locate and corrupt this file to
+    // exercise the classification paths below, without hardcoding a duplicate literal.
+    internal const string OwnershipMarkerFileName = "turoclawprowl-bundle-publisher";
+
+    private enum WorktreeOwnership
+    {
+        // Fails a structural check (wrong path, main working tree, not a worktree of
+        // this source repo at all, etc.) -- nothing to do with the marker.
+        NotThisPublishers,
+
+        // Passes every structural check -- a genuine, registered linked worktree of
+        // this exact source repo -- but its ownership marker is missing, empty,
+        // unreadable, or names a different repository.
+        MissingOrInvalidMarker,
+
+        Owned,
+    }
 
     // A directory can pass `rev-parse --is-inside-work-tree` for ANY git repository,
     // not just one this publisher created -- and that includes the source repo's own
@@ -229,22 +265,22 @@ public sealed class GitWorktreeBundlePublisher : IBundlePublisher
     //   5. git itself lists _worktreePath as one of _sourceRepoPath's worktrees.
     //   6. It carries this publisher's own ownership marker for this exact source repo
     //      -- the one structural fact git cannot supply on its own.
-    private async Task<bool> IsThisPublishersWorktreeAsync(CancellationToken cancellationToken)
+    private async Task<WorktreeOwnership> DetermineWorktreeOwnershipAsync(CancellationToken cancellationToken)
     {
         if (PathsEqual(_worktreePath, _sourceRepoPath))
-            return false;
+            return WorktreeOwnership.NotThisPublishers;
 
         var toplevel = await RunAsync(_worktreePath, cancellationToken, "rev-parse", "--show-toplevel")
             .ConfigureAwait(false);
         if (toplevel.ExitCode != 0 || !PathsEqual(toplevel.StdOut.Trim(), _worktreePath))
-            return false;
+            return WorktreeOwnership.NotThisPublishers;
 
         var gitDir = await RunAsync(_worktreePath, cancellationToken, "rev-parse", "--git-dir")
             .ConfigureAwait(false);
         var commonDir = await RunAsync(_worktreePath, cancellationToken, "rev-parse", "--git-common-dir")
             .ConfigureAwait(false);
         if (gitDir.ExitCode != 0 || commonDir.ExitCode != 0)
-            return false;
+            return WorktreeOwnership.NotThisPublishers;
 
         var gitDirFull = ResolveAgainstWorktree(gitDir.StdOut.Trim());
         var commonDirFull = ResolveAgainstWorktree(commonDir.StdOut.Trim());
@@ -252,41 +288,82 @@ public sealed class GitWorktreeBundlePublisher : IBundlePublisher
         // A main working tree (the source repo's own root, or any other repo's root)
         // has git-dir == git-common-dir; only a linked worktree differs.
         if (PathsEqual(gitDirFull, commonDirFull))
-            return false;
+            return WorktreeOwnership.NotThisPublishers;
 
         if (!IsWithin(commonDirFull, _sourceRepoPath))
-            return false;
+            return WorktreeOwnership.NotThisPublishers;
 
         var list = await RunAsync(_sourceRepoPath, cancellationToken, "worktree", "list", "--porcelain")
             .ConfigureAwait(false);
         if (list.ExitCode != 0)
-            return false;
+            return WorktreeOwnership.NotThisPublishers;
 
         if (!ParseWorktreeListPaths(list.StdOut).Any(path => PathsEqual(path, _worktreePath)))
-            return false;
+            return WorktreeOwnership.NotThisPublishers;
 
+        // Every structural check passed: this IS a genuine, registered linked worktree
+        // of the source repo. Only the ownership marker can now say whether this
+        // publisher made it. Any problem reading it -- missing, empty, unreadable, or
+        // naming a different repo -- is classified the same actionable way; none of
+        // them may throw out of here, since the whole point of this design is that
+        // failures are classified and named, never thrown.
         var markerPath = Path.Combine(gitDirFull, OwnershipMarkerFileName);
-        if (!File.Exists(markerPath))
-            return false;
+        string marker;
+        try
+        {
+            if (!File.Exists(markerPath))
+                return WorktreeOwnership.MissingOrInvalidMarker;
 
-        var marker = await File.ReadAllTextAsync(markerPath, cancellationToken).ConfigureAwait(false);
-        return PathsEqual(marker.Trim(), _sourceRepoPath);
+            marker = await File.ReadAllTextAsync(markerPath, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return WorktreeOwnership.MissingOrInvalidMarker;
+        }
+
+        if (string.IsNullOrWhiteSpace(marker))
+            return WorktreeOwnership.MissingOrInvalidMarker;
+
+        return PathsEqual(marker.Trim(), _sourceRepoPath)
+            ? WorktreeOwnership.Owned
+            : WorktreeOwnership.MissingOrInvalidMarker;
     }
 
-    // Written immediately after this publisher creates a worktree, so a later publish
-    // can prove the worktree at _worktreePath is one it made, not merely one that
-    // happens to satisfy every structural git check above.
-    private async Task WriteOwnershipMarkerAsync(CancellationToken cancellationToken)
+    // A publisher-created worktree must always carry its ownership marker -- one
+    // without it would be a permanent dead end, since EnsureWorktreeAsync never
+    // recreates an existing, otherwise-valid worktree; only a human deleting the
+    // directory by hand could recover it. If the marker cannot be written, remove the
+    // worktree just created rather than leave that trap behind, and surface the real
+    // cause as a Transient failure -- this is local I/O, not a bad setting.
+    private async Task<BundlePublishResult?> WriteOwnershipMarkerAsync(CancellationToken cancellationToken)
     {
         var gitDir = await RunAsync(_worktreePath, cancellationToken, "rev-parse", "--git-dir")
             .ConfigureAwait(false);
         if (gitDir.ExitCode != 0)
-            return; // Best-effort: a later publish will simply fail to adopt and recreate the worktree.
+            return await RemoveFreshWorktreeAndFailAsync(Error(gitDir), cancellationToken).ConfigureAwait(false);
 
         var gitDirFull = ResolveAgainstWorktree(gitDir.StdOut.Trim());
-        await File.WriteAllTextAsync(
-            Path.Combine(gitDirFull, OwnershipMarkerFileName), _sourceRepoPath, cancellationToken)
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(gitDirFull, OwnershipMarkerFileName), _sourceRepoPath, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return await RemoveFreshWorktreeAndFailAsync(ex.Message, cancellationToken).ConfigureAwait(false);
+        }
+
+        return null;
+    }
+
+    private async Task<BundlePublishResult> RemoveFreshWorktreeAndFailAsync(
+        string detail, CancellationToken cancellationToken)
+    {
+        await RunAsync(_sourceRepoPath, cancellationToken, "worktree", "remove", "--force", _worktreePath)
             .ConfigureAwait(false);
+        return new BundlePublishResult.Transient(
+            $"could not write the bundle worktree ownership marker for {_worktreePath}: {detail}");
     }
 
     private string ResolveAgainstWorktree(string path) =>

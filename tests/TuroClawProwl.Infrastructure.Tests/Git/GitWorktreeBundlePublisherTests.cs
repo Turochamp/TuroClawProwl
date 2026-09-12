@@ -592,4 +592,63 @@ public class GitWorktreeBundlePublisherTests
 
         File.Exists(Path.Combine(usersOwnWorktree, "scratch.md")).Should().BeTrue();
     }
+
+    private static string OwnershipMarkerPath(string worktreePath)
+    {
+        var gitDir = GitCli.Read(worktreePath, "rev-parse", "--git-dir");
+        var full = Path.IsPathRooted(gitDir) ? gitDir : Path.GetFullPath(Path.Combine(worktreePath, gitDir));
+        return Path.Combine(full, GitWorktreeBundlePublisher.OwnershipMarkerFileName);
+    }
+
+    [Fact]
+    public async Task A_worktree_with_an_empty_ownership_marker_is_reported_as_a_misconfiguration_and_leaves_it_untouched()
+    {
+        using var repo = new TempGitRepo();
+        repo.SetUpBareRemoteAndPush();
+        repo.Run("checkout", "-b", "feature/humanize-design");
+        using var home = new TempDirectory();
+        var worktree = Path.Combine(home.Path, "bundle-worktree");
+        var publisher = new GitWorktreeBundlePublisher(repo.Path, worktree, "main");
+        await publisher.PublishAsync(PayloadOn("feature/humanize-design"));
+        // Whitespace-only, not just zero-length: an empty marker must not reach path
+        // normalization (Path.GetFullPath("") throws ArgumentException) or be treated
+        // as an accidental match.
+        await File.WriteAllTextAsync(OwnershipMarkerPath(worktree), "   ");
+        await File.WriteAllTextAsync(Path.Combine(worktree, "scratch.md"), "# left behind");
+
+        var result = await publisher.PublishAsync(PayloadOn("feature/humanize-design") with
+        {
+            Files = [new BundleFile("registry.md", "# Registry, revised")],
+            Manifest = PayloadOn("feature/humanize-design").Manifest with { PublishedAt = Now.AddMinutes(5) },
+        });
+
+        var misconfigured = result.Should().BeOfType<BundlePublishResult.Misconfigured>().Subject;
+        misconfigured.SettingName.Should().Be(GitWorktreeBundlePublisher.WorktreeSetting);
+        File.Exists(Path.Combine(worktree, "scratch.md")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task A_worktree_whose_ownership_marker_names_a_different_repo_is_reported_as_a_misconfiguration_and_leaves_it_untouched()
+    {
+        using var repo = new TempGitRepo();
+        repo.SetUpBareRemoteAndPush();
+        repo.Run("checkout", "-b", "feature/humanize-design");
+        using var otherRepo = new TempGitRepo();
+        using var home = new TempDirectory();
+        var worktree = Path.Combine(home.Path, "bundle-worktree");
+        var publisher = new GitWorktreeBundlePublisher(repo.Path, worktree, "main");
+        await publisher.PublishAsync(PayloadOn("feature/humanize-design"));
+        await File.WriteAllTextAsync(OwnershipMarkerPath(worktree), otherRepo.Path);
+        await File.WriteAllTextAsync(Path.Combine(worktree, "scratch.md"), "# left behind");
+
+        var result = await publisher.PublishAsync(PayloadOn("feature/humanize-design") with
+        {
+            Files = [new BundleFile("registry.md", "# Registry, revised")],
+            Manifest = PayloadOn("feature/humanize-design").Manifest with { PublishedAt = Now.AddMinutes(5) },
+        });
+
+        var misconfigured = result.Should().BeOfType<BundlePublishResult.Misconfigured>().Subject;
+        misconfigured.SettingName.Should().Be(GitWorktreeBundlePublisher.WorktreeSetting);
+        File.Exists(Path.Combine(worktree, "scratch.md")).Should().BeTrue();
+    }
 }
