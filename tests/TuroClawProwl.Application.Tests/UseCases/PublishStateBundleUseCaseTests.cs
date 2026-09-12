@@ -214,4 +214,127 @@ public class PublishStateBundleUseCaseTests
 
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
+
+    [Fact]
+    public async Task A_missing_cca_state_file_is_recorded_and_every_other_source_still_publishes()
+    {
+        SetUpPublisher("main");
+        SetUpCleanTrackedFacts();
+        SetUpFile(BundleLayout.RegistryRelativePath, Registry, Now.AddMinutes(-10));
+        SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts", Now.AddHours(-3));
+        SetUpFile(BundleLayout.WeeklyRelativePath(Now.ToLocalTime()), "# Week", Now.AddDays(-2));
+        SetUpFile("CCA-YNE/STATE.md", "# YNE state", Now.AddHours(-1));
+        _files.Setup(f => f.ReadAsync(Abs("CCA-SmoEms/STATE.md"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SourceReadResult.Missing());
+
+        var result = await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+
+        result.Should().BeOfType<BundlePublishResult.Success>();
+        _captured!.Manifest.Failures.Should().ContainSingle()
+            .Which.Should().BeEquivalentTo(new BundleFailure("cca/SmoEms", "missing"));
+        _captured!.Manifest.Sources.Select(s => s.Id).Should().Contain("cca/YNE");
+        _captured!.Files.Should().NotContain(f => f.RelativePath == "cca/SmoEms.STATE.md");
+    }
+
+    [Fact]
+    public async Task An_unreadable_source_records_its_error_as_the_failure_reason()
+    {
+        SetUpPublisher("main");
+        SetUpCleanTrackedFacts();
+        SetUpFile(BundleLayout.RegistryRelativePath, Registry, Now.AddMinutes(-10));
+        SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts", Now.AddHours(-3));
+        SetUpFile(BundleLayout.WeeklyRelativePath(Now.ToLocalTime()), "# Week", Now.AddDays(-2));
+        SetUpFile("CCA-SmoEms/STATE.md", "# SmoEms state", Now.AddHours(-5));
+        _files.Setup(f => f.ReadAsync(Abs("CCA-YNE/STATE.md"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SourceReadResult.Unreadable("The process cannot access the file"));
+
+        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+
+        _captured!.Manifest.Failures.Should().ContainSingle()
+            .Which.Reason.Should().Be("The process cannot access the file");
+    }
+
+    [Fact]
+    public async Task An_unreadable_registry_does_not_abort_the_bundle()
+    {
+        SetUpPublisher("main");
+        SetUpCleanTrackedFacts();
+        _files.Setup(f => f.ReadAsync(Abs(BundleLayout.RegistryRelativePath), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SourceReadResult.Missing());
+        SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts", Now.AddHours(-3));
+        SetUpFile(BundleLayout.WeeklyRelativePath(Now.ToLocalTime()), "# Week", Now.AddDays(-2));
+
+        var result = await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+
+        result.Should().BeOfType<BundlePublishResult.Success>();
+        _captured!.Manifest.Failures.Should().ContainSingle().Which.Id.Should().Be("registry");
+        _captured!.Files.Select(f => f.RelativePath).Should().Contain(BundleLayout.CrmIndexBundlePath);
+    }
+
+    [Fact]
+    public async Task A_source_outside_any_repository_publishes_with_a_null_committed_date()
+    {
+        SetUpPublisher("main");
+        SetUpFile(BundleLayout.RegistryRelativePath, Registry, Now.AddMinutes(-10));
+        SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts", Now.AddHours(-3));
+        SetUpFile(BundleLayout.WeeklyRelativePath(Now.ToLocalTime()), "# Week", Now.AddDays(-2));
+        SetUpFile("CCA-YNE/STATE.md", "# YNE state", Now.AddHours(-1));
+        SetUpFile("CCA-SmoEms/STATE.md", "# SmoEms state", Now.AddHours(-5));
+        _gitFacts.Setup(g => g.GetFileFactsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GitFileFacts(
+                InRepository: true, Tracked: true, Dirty: false, LastCommitAuthorDate: Now.AddDays(-1)));
+        _gitFacts.Setup(g => g.GetFileFactsAsync(Abs("CCA-YNE/STATE.md"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(GitFileFacts.OutsideRepository());
+
+        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+
+        var yne = _captured!.Manifest.Sources.Single(s => s.Id == "cca/YNE");
+        yne.Committed.Should().BeNull();
+        yne.Dirty.Should().BeTrue();
+        _captured!.Files.Should().Contain(f => f.RelativePath == "cca/YNE.STATE.md");
+    }
+
+    [Fact]
+    public async Task An_untracked_source_publishes_with_a_null_committed_date()
+    {
+        SetUpPublisher("main");
+        SetUpFile(BundleLayout.RegistryRelativePath, Registry, Now.AddMinutes(-10));
+        SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts", Now.AddHours(-3));
+        SetUpFile(BundleLayout.WeeklyRelativePath(Now.ToLocalTime()), "# Week", Now.AddDays(-2));
+        SetUpFile("CCA-YNE/STATE.md", "# YNE state", Now.AddHours(-1));
+        SetUpFile("CCA-SmoEms/STATE.md", "# SmoEms state", Now.AddHours(-5));
+        _gitFacts.Setup(g => g.GetFileFactsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(GitFileFacts.Untracked());
+
+        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+
+        _captured!.Manifest.Sources.Should().AllSatisfy(s =>
+        {
+            s.Committed.Should().BeNull();
+            s.Dirty.Should().BeTrue();
+        });
+    }
+
+    [Fact]
+    public async Task An_uncommitted_source_publishes_its_working_tree_content_and_is_marked_dirty()
+    {
+        SetUpPublisher("feature/humanize-design");
+        SetUpFile(BundleLayout.RegistryRelativePath, Registry, Now.AddMinutes(-10));
+        SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts", Now.AddHours(-3));
+        SetUpFile(BundleLayout.WeeklyRelativePath(Now.ToLocalTime()), "# Week", Now.AddDays(-2));
+        SetUpFile("CCA-YNE/STATE.md", "# YNE state — edited, not committed", Now.AddMinutes(-1));
+        SetUpFile("CCA-SmoEms/STATE.md", "# SmoEms state", Now.AddHours(-5));
+        _gitFacts.Setup(g => g.GetFileFactsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GitFileFacts(
+                InRepository: true, Tracked: true, Dirty: true, LastCommitAuthorDate: Now.AddDays(-4)));
+
+        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
+
+        _captured!.Files.Single(f => f.RelativePath == "cca/YNE.STATE.md").Content
+            .Should().Be("# YNE state — edited, not committed");
+        var yne = _captured!.Manifest.Sources.Single(s => s.Id == "cca/YNE");
+        yne.Dirty.Should().BeTrue();
+        yne.Modified.Should().Be(Now.AddMinutes(-1));
+        yne.Committed.Should().Be(Now.AddDays(-4));
+    }
 }
