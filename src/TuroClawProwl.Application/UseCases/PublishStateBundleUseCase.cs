@@ -126,9 +126,21 @@ public sealed class PublishStateBundleUseCase
             "State bundle collected {SourceCount} sources and {FailureCount} failures from branch {Branch}",
             collected.Sources.Count, collected.Failures.Count, sourceBranch);
 
-        return await _publisher
+        var published = await _publisher
             .PublishAsync(new BundlePayload(collected.Files, manifest), cancellationToken)
             .ConfigureAwait(false);
+
+        // A snapshot misconfiguration must not abort the bundle, but Michael
+        // still has to be told which setting is wrong, so it is reported once
+        // the reachable sources are safely published.
+        if (published is BundlePublishResult.Success &&
+            collected.SnapshotMisconfiguration is { } snapshotFault)
+        {
+            return new BundlePublishResult.Misconfigured(
+                snapshotFault.SettingName, snapshotFault.Detail);
+        }
+
+        return published;
     }
 
     private async Task<string?> CollectAsync(
@@ -228,6 +240,9 @@ public sealed class PublishStateBundleUseCase
         var reason = ReasonFor(read);
         collected.Failures.Add(new BundleFailure(id, reason));
 
+        if (read is GoogleReadResult.Misconfigured misconfigured)
+            collected.SnapshotMisconfiguration ??= misconfigured;
+
         var previous = await _snapshots.GetAsync(id, cancellationToken).ConfigureAwait(false);
         if (previous is null)
         {
@@ -270,5 +285,6 @@ public sealed class PublishStateBundleUseCase
         public List<BundleFile> Files { get; } = [];
         public List<BundleSource> Sources { get; } = [];
         public List<BundleFailure> Failures { get; } = [];
+        public GoogleReadResult.Misconfigured? SnapshotMisconfiguration { get; set; }
     }
 }

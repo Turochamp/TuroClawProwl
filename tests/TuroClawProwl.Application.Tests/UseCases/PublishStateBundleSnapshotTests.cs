@@ -378,4 +378,73 @@ public class PublishStateBundleSnapshotTests
         stored.ContentReadAt.Should().Be(Now);
         stored.VerifiedAt.Should().Be(Now);
     }
+
+    [Fact]
+    public async Task A_missing_gws_binary_is_reported_as_a_misconfiguration_naming_the_setting()
+    {
+        _google.Setup(g => g.ReadTaskListAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleReadResult.Misconfigured(
+                "gwsExecutablePath", @"C:/Users/micha/bin/gws.cmd was not found"));
+        _google.Setup(g => g.ReadCalendarWindowAsync(
+                It.IsAny<IReadOnlyList<RegistryCalendar>>(), It.IsAny<CalendarWindow>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleReadResult.Misconfigured(
+                "gwsExecutablePath", @"C:/Users/micha/bin/gws.cmd was not found"));
+
+        var result = await CreateUseCase().ExecuteAsync(Request());
+
+        var misconfigured = result.Should().BeOfType<BundlePublishResult.Misconfigured>().Subject;
+        misconfigured.SettingName.Should().Be("gwsExecutablePath");
+        misconfigured.Detail.Should().Contain("gws.cmd");
+    }
+
+    [Fact]
+    public async Task A_misconfigured_reader_still_publishes_every_reachable_source()
+    {
+        _google.Setup(g => g.ReadTaskListAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleReadResult.Misconfigured("gwsExecutablePath", "not found"));
+        _google.Setup(g => g.ReadCalendarWindowAsync(
+                It.IsAny<IReadOnlyList<RegistryCalendar>>(), It.IsAny<CalendarWindow>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleReadResult.Misconfigured("gwsExecutablePath", "not found"));
+
+        await CreateUseCase().ExecuteAsync(Request());
+
+        _publisher.Verify(
+            p => p.PublishAsync(It.IsAny<BundlePayload>(), It.IsAny<CancellationToken>()), Times.Once);
+        _captured!.Files.Select(f => f.RelativePath).Should().Contain(new[]
+        {
+            "registry.md", "crm-index.md", "cca/YNE.STATE.md",
+        });
+        _captured!.Manifest.Failures.Select(f => f.Id).Should().Contain(new[]
+        {
+            "tasks/yne", "tasks/my-tasks", "calendar/window",
+        });
+    }
+
+    [Fact]
+    public async Task Not_authenticated_is_a_failed_read_not_a_misconfiguration()
+    {
+        _google.Setup(g => g.ReadTaskListAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleReadResult.NotAuthenticated("exit code 2"));
+
+        var result = await CreateUseCase().ExecuteAsync(Request());
+
+        result.Should().BeOfType<BundlePublishResult.Success>();
+    }
+
+    [Fact]
+    public async Task A_git_publish_failure_outranks_a_snapshot_misconfiguration()
+    {
+        _google.Setup(g => g.ReadTaskListAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleReadResult.Misconfigured("gwsExecutablePath", "not found"));
+        _google.Setup(g => g.ReadCalendarWindowAsync(
+                It.IsAny<IReadOnlyList<RegistryCalendar>>(), It.IsAny<CalendarWindow>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleReadResult.Misconfigured("gwsExecutablePath", "not found"));
+        _publisher.Setup(p => p.PublishAsync(It.IsAny<BundlePayload>(), It.IsAny<CancellationToken>()))
+            .Callback<BundlePayload, CancellationToken>((p, _) => _captured = p)
+            .ReturnsAsync(new BundlePublishResult.Transient("Connection timed out"));
+
+        var result = await CreateUseCase().ExecuteAsync(Request());
+
+        result.Should().BeOfType<BundlePublishResult.Transient>();
+    }
 }
