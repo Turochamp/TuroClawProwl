@@ -30,13 +30,32 @@ public class PublishStateBundleUseCaseTests
 
     private readonly Mock<ISourceFileReader> _files = new(MockBehavior.Strict);
     private readonly Mock<IGitFileFactsReader> _gitFacts = new(MockBehavior.Strict);
+    private readonly Mock<IGoogleWorkspaceReader> _google = new(MockBehavior.Strict);
+    private readonly Mock<ISnapshotStore> _snapshots = new(MockBehavior.Strict);
     private readonly Mock<IBundlePublisher> _publisher = new(MockBehavior.Strict);
     private readonly FixedClock _clock = new(Now);
 
     private BundlePayload? _captured;
 
+    public PublishStateBundleUseCaseTests()
+    {
+        SetUpNoSnapshots();
+    }
+
+    private void SetUpNoSnapshots()
+    {
+        _google.Setup(g => g.ReadTaskListAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleReadResult.Failure("snapshots disabled in this test"));
+        _google.Setup(g => g.ReadCalendarWindowAsync(
+                It.IsAny<IReadOnlyList<RegistryCalendar>>(), It.IsAny<CalendarWindow>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleReadResult.Failure("snapshots disabled in this test"));
+        _snapshots.Setup(s => s.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((StoredSnapshot?)null);
+    }
+
     private PublishStateBundleUseCase CreateUseCase() =>
-        new(_files.Object, _gitFacts.Object, _publisher.Object, _clock);
+        new(_files.Object, _gitFacts.Object, _google.Object, _snapshots.Object,
+            _publisher.Object, _clock);
 
     private static string Abs(string relative) =>
         Path.Combine(HubRoot, relative.Replace('/', Path.DirectorySeparatorChar));
@@ -144,7 +163,8 @@ public class PublishStateBundleUseCaseTests
         await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
 
         _captured!.Manifest.Sources.Should().HaveCount(5);
-        _captured!.Manifest.Failures.Should().BeEmpty();
+        _captured!.Manifest.Failures.Should()
+            .OnlyContain(f => f.Id.StartsWith("tasks/") || f.Id.StartsWith("calendar/"));
         _captured!.Manifest.Sources.Single(s => s.Id == "cca/YNE").Path
             .Should().Be("CCA-YNE/STATE.md");
         _captured!.Manifest.Sources.Single(s => s.Id == "registry").Modified
@@ -230,7 +250,7 @@ public class PublishStateBundleUseCaseTests
         var result = await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
 
         result.Should().BeOfType<BundlePublishResult.Success>();
-        _captured!.Manifest.Failures.Should().ContainSingle()
+        _captured!.Manifest.Failures.Should().ContainSingle(f => f.Id == "cca/SmoEms")
             .Which.Should().BeEquivalentTo(new BundleFailure("cca/SmoEms", "missing"));
         _captured!.Manifest.Sources.Select(s => s.Id).Should().Contain("cca/YNE");
         _captured!.Files.Should().NotContain(f => f.RelativePath == "cca/SmoEms.STATE.md");
@@ -250,7 +270,7 @@ public class PublishStateBundleUseCaseTests
 
         await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
 
-        _captured!.Manifest.Failures.Should().ContainSingle()
+        _captured!.Manifest.Failures.Should().ContainSingle(f => f.Id == "cca/YNE")
             .Which.Reason.Should().Be("The process cannot access the file");
     }
 
@@ -267,7 +287,7 @@ public class PublishStateBundleUseCaseTests
         var result = await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0"));
 
         result.Should().BeOfType<BundlePublishResult.Success>();
-        _captured!.Manifest.Failures.Should().ContainSingle().Which.Id.Should().Be("registry");
+        _captured!.Manifest.Failures.Should().ContainSingle(f => f.Id == "registry");
         _captured!.Files.Select(f => f.RelativePath).Should().Contain(BundleLayout.CrmIndexBundlePath);
     }
 

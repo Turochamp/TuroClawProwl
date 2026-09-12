@@ -9,6 +9,8 @@ public sealed class PublishStateBundleUseCase
 {
     private readonly ISourceFileReader _files;
     private readonly IGitFileFactsReader _gitFacts;
+    private readonly IGoogleWorkspaceReader _google;
+    private readonly ISnapshotStore _snapshots;
     private readonly IBundlePublisher _publisher;
     private readonly IClock _clock;
     private readonly ILogger<PublishStateBundleUseCase> _logger;
@@ -16,17 +18,23 @@ public sealed class PublishStateBundleUseCase
     public PublishStateBundleUseCase(
         ISourceFileReader files,
         IGitFileFactsReader gitFacts,
+        IGoogleWorkspaceReader google,
+        ISnapshotStore snapshots,
         IBundlePublisher publisher,
         IClock clock,
         ILogger<PublishStateBundleUseCase>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(files);
         ArgumentNullException.ThrowIfNull(gitFacts);
+        ArgumentNullException.ThrowIfNull(google);
+        ArgumentNullException.ThrowIfNull(snapshots);
         ArgumentNullException.ThrowIfNull(publisher);
         ArgumentNullException.ThrowIfNull(clock);
 
         _files = files;
         _gitFacts = gitFacts;
+        _google = google;
+        _snapshots = snapshots;
         _publisher = publisher;
         _clock = clock;
         _logger = logger ?? NullLogger<PublishStateBundleUseCase>.Instance;
@@ -83,6 +91,28 @@ public sealed class PublishStateBundleUseCase
                     cancellationToken).ConfigureAwait(false);
             }
         }
+
+        var calendars = registry is null
+            ? Array.Empty<RegistryCalendar>()
+            : RegistryParser.ParseCalendars(registry);
+
+        foreach (var list in GoogleSnapshotPlan.TaskLists())
+        {
+            var read = await _google.ReadTaskListAsync(list.ListId, cancellationToken)
+                .ConfigureAwait(false);
+            await CollectSnapshotAsync(
+                list.Id, GoogleSnapshotPlan.TaskListApiPath(list.ListId), list.BundlePath,
+                read, now, collected, cancellationToken).ConfigureAwait(false);
+        }
+
+        var window = GoogleSnapshotPlan.WindowFor(localNow);
+        var calendarRead = await _google
+            .ReadCalendarWindowAsync(calendars, window, cancellationToken).ConfigureAwait(false);
+        await CollectSnapshotAsync(
+            GoogleSnapshotPlan.CalendarWindowSourceId,
+            GoogleSnapshotPlan.CalendarWindowApiPath,
+            GoogleSnapshotPlan.CalendarWindowBundlePath,
+            calendarRead, now, collected, cancellationToken).ConfigureAwait(false);
 
         var manifest = new BundleManifest(
             SchemaVersion: BundleManifest.CurrentSchemaVersion,
@@ -146,6 +176,71 @@ public sealed class PublishStateBundleUseCase
 
         return found.Content;
     }
+
+    private async Task CollectSnapshotAsync(
+        string id,
+        string apiPath,
+        string bundlePath,
+        GoogleReadResult read,
+        DateTimeOffset now,
+        Collected collected,
+        CancellationToken cancellationToken)
+    {
+        if (read is GoogleReadResult.Success success)
+        {
+            var previous = await _snapshots.GetAsync(id, cancellationToken).ConfigureAwait(false);
+
+            // A byte-identical re-read keeps the content timestamp and advances
+            // only the verification timestamp: the data is the same age, but it
+            // has just been confirmed current.
+            var unchanged = previous is not null &&
+                string.Equals(previous.Content, success.Json, StringComparison.Ordinal);
+            var contentReadAt = unchanged ? previous!.ContentReadAt : now;
+
+            await _snapshots
+                .SaveAsync(new StoredSnapshot(id, success.Json, contentReadAt, now), cancellationToken)
+                .ConfigureAwait(false);
+
+            collected.Files.Add(new BundleFile(bundlePath, success.Json));
+            collected.Sources.Add(new BundleSource(
+                Id: id,
+                Path: apiPath,
+                BundlePath: bundlePath,
+                Modified: contentReadAt,
+                Verified: now,
+                Committed: null,
+                Dirty: false));
+            return;
+        }
+
+        await RetainSnapshotAsync(id, apiPath, bundlePath, read, collected, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task RetainSnapshotAsync(
+        string id,
+        string apiPath,
+        string bundlePath,
+        GoogleReadResult read,
+        Collected collected,
+        CancellationToken cancellationToken)
+    {
+        var reason = ReasonFor(read);
+        collected.Failures.Add(new BundleFailure(id, reason));
+        _logger.LogWarning("Snapshot {Id} could not be refreshed: {Reason}", id, reason);
+        await Task.CompletedTask.ConfigureAwait(false);
+    }
+
+    private static string ReasonFor(GoogleReadResult read) => read switch
+    {
+        GoogleReadResult.NotAuthenticated n => "not authenticated: " + n.Detail,
+        GoogleReadResult.Misconfigured m => $"misconfigured ({m.SettingName}): {m.Detail}",
+        GoogleReadResult.Failure f => f.Detail,
+        GoogleReadResult.Success => throw new ArgumentException(
+            "A successful read is not a retention case", nameof(read)),
+        _ => throw new ArgumentException(
+            $"Unknown Google read result variant: {read.GetType().Name}", nameof(read)),
+    };
 
     private sealed class Collected
     {
