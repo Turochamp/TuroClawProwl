@@ -333,10 +333,14 @@ public sealed class GitWorktreeBundlePublisher : IBundlePublisher
 
         // Every structural check passed: this IS a genuine, registered linked worktree
         // of the source repo. Only the ownership marker can now say whether this
-        // publisher made it. Any problem reading it -- missing, empty, unreadable, or
-        // naming a different repo -- is classified the same actionable way; none of
-        // them may throw out of here, since the whole point of this design is that
-        // failures are classified and named, never thrown.
+        // publisher made it. Missing, empty or unreadable (IOException /
+        // UnauthorizedAccessException) are all classified the same actionable way
+        // without throwing. The one path that is NOT covered: PathsEqual below calls
+        // Path.GetFullPath on the marker's content, which throws ArgumentException for
+        // a syntactically invalid path. That is reachable only if something has
+        // written junk into this publisher's own private git-dir -- not a case a
+        // normal user or a corrupt-but-well-formed marker can hit -- which is why the
+        // code is left as-is rather than adding a third catch for it.
         var markerPath = Path.Combine(gitDirFull, OwnershipMarkerFileName);
         string marker;
         try
