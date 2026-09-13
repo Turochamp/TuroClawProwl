@@ -69,7 +69,7 @@ internal static class BundleSourcePathsResolver
             foreach (var item in BundleSourcePlan.FromRegistry(registry))
                 paths.Add(Absolute(hubRoot, item.SourceRelativePath));
         }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             logger.LogWarning(ex, "Could not read the registry at {Path}", registryPath);
         }
