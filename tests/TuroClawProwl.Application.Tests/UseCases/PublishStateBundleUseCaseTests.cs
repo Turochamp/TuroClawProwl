@@ -50,7 +50,7 @@ public class PublishStateBundleUseCaseTests
                 It.IsAny<IReadOnlyList<RegistryCalendar>>(), It.IsAny<CalendarWindow>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new GoogleReadResult.Failure("snapshots disabled in this test"));
         _snapshots.Setup(s => s.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((StoredSnapshot?)null);
+            .ReturnsAsync(new SnapshotReadResult.NotFound());
     }
 
     private PublishStateBundleUseCase CreateUseCase() =>

@@ -19,11 +19,11 @@ public class JsonFileSnapshotStoreTests
         await store.SaveAsync(new StoredSnapshot("tasks/yne", "{\"items\":[]}", ReadAt, VerifiedAt));
         var loaded = await store.GetAsync("tasks/yne");
 
-        loaded.Should().NotBeNull();
-        loaded!.Id.Should().Be("tasks/yne");
-        loaded.Content.Should().Be("{\"items\":[]}");
-        loaded.ContentReadAt.Should().Be(ReadAt);
-        loaded.VerifiedAt.Should().Be(VerifiedAt);
+        var found = loaded.Should().BeOfType<SnapshotReadResult.Found>().Subject;
+        found.Snapshot.Id.Should().Be("tasks/yne");
+        found.Snapshot.Content.Should().Be("{\"items\":[]}");
+        found.Snapshot.ContentReadAt.Should().Be(ReadAt);
+        found.Snapshot.VerifiedAt.Should().Be(VerifiedAt);
     }
 
     [Fact]
@@ -38,8 +38,8 @@ public class JsonFileSnapshotStoreTests
         var json = await File.ReadAllTextAsync(Directory.GetFiles(directory).Single());
         json.Should().Contain("\"read_at\"");
         json.Should().Contain("\"verified_at\"");
-        var loaded = await store.GetAsync("tasks/yne");
-        loaded!.VerifiedAt.Should().BeAfter(loaded.ContentReadAt);
+        var loaded = ((SnapshotReadResult.Found)await store.GetAsync("tasks/yne")).Snapshot;
+        loaded.VerifiedAt.Should().BeAfter(loaded.ContentReadAt);
     }
 
     [Fact]
@@ -53,7 +53,7 @@ public class JsonFileSnapshotStoreTests
 
         Directory.GetFiles(directory).Should().ContainSingle();
         Directory.GetDirectories(directory).Should().BeEmpty();
-        (await store.GetAsync("calendar/window"))!.Content.Should().Be("{}");
+        ((SnapshotReadResult.Found)await store.GetAsync("calendar/window")).Snapshot.Content.Should().Be("{}");
     }
 
     [Fact]
@@ -65,17 +65,17 @@ public class JsonFileSnapshotStoreTests
         await store.SaveAsync(new StoredSnapshot("tasks/yne", "{\"a\":1}", ReadAt, VerifiedAt));
         await store.SaveAsync(new StoredSnapshot("tasks/my-tasks", "{\"b\":2}", ReadAt, VerifiedAt));
 
-        (await store.GetAsync("tasks/yne"))!.Content.Should().Be("{\"a\":1}");
-        (await store.GetAsync("tasks/my-tasks"))!.Content.Should().Be("{\"b\":2}");
+        ((SnapshotReadResult.Found)await store.GetAsync("tasks/yne")).Snapshot.Content.Should().Be("{\"a\":1}");
+        ((SnapshotReadResult.Found)await store.GetAsync("tasks/my-tasks")).Snapshot.Content.Should().Be("{\"b\":2}");
     }
 
     [Fact]
-    public async Task An_unknown_id_yields_null_rather_than_throwing()
+    public async Task An_unknown_id_yields_not_found_rather_than_throwing()
     {
         using var tmp = new TempDirectory();
         var store = new JsonFileSnapshotStore(Path.Combine(tmp.Path, "snapshots"));
 
-        (await store.GetAsync("tasks/yne")).Should().BeNull();
+        (await store.GetAsync("tasks/yne")).Should().BeOfType<SnapshotReadResult.NotFound>();
     }
 
     [Fact]
@@ -86,15 +86,15 @@ public class JsonFileSnapshotStoreTests
         await store.SaveAsync(new StoredSnapshot("tasks/yne", "{\"a\":1}", ReadAt, VerifiedAt));
 
         await store.SaveAsync(new StoredSnapshot("tasks/yne", "{\"a\":2}", ReadAt.AddHours(1), VerifiedAt.AddHours(1)));
-        var loaded = await store.GetAsync("tasks/yne");
+        var loaded = ((SnapshotReadResult.Found)await store.GetAsync("tasks/yne")).Snapshot;
 
-        loaded!.Content.Should().Be("{\"a\":2}");
+        loaded.Content.Should().Be("{\"a\":2}");
         loaded.ContentReadAt.Should().Be(ReadAt.AddHours(1));
         loaded.VerifiedAt.Should().Be(VerifiedAt.AddHours(1));
     }
 
     [Fact]
-    public async Task A_corrupt_snapshot_file_reads_as_absent_rather_than_throwing()
+    public async Task A_corrupt_snapshot_file_reads_as_unreadable_rather_than_throwing_or_reading_as_absent()
     {
         using var tmp = new TempDirectory();
         var directory = Path.Combine(tmp.Path, "snapshots");
@@ -103,7 +103,11 @@ public class JsonFileSnapshotStoreTests
         var file = Directory.GetFiles(directory).Single();
         await File.WriteAllTextAsync(file, "{ this is not json");
 
-        (await store.GetAsync("tasks/yne")).Should().BeNull();
+        // Unreadable, not NotFound: a snapshot DOES exist here, it just could not
+        // be read back. Collapsing the two would let a caller treat a corrupt
+        // file the same as "nothing has ever been stored" (see
+        // PublishStateBundleUseCase.CollectSnapshotAsync).
+        (await store.GetAsync("tasks/yne")).Should().BeOfType<SnapshotReadResult.Unreadable>();
     }
 
     [Fact]
@@ -114,9 +118,10 @@ public class JsonFileSnapshotStoreTests
         await new JsonFileSnapshotStore(directory)
             .SaveAsync(new StoredSnapshot("calendar/window", "{\"calendars\":[]}", ReadAt, VerifiedAt));
 
-        var loaded = await new JsonFileSnapshotStore(directory).GetAsync("calendar/window");
+        var loaded = ((SnapshotReadResult.Found)await new JsonFileSnapshotStore(directory)
+            .GetAsync("calendar/window")).Snapshot;
 
-        loaded!.VerifiedAt.Should().Be(VerifiedAt);
+        loaded.VerifiedAt.Should().Be(VerifiedAt);
     }
 
     [Fact]

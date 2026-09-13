@@ -11,9 +11,28 @@ public sealed record StoredSnapshot(
     DateTimeOffset ContentReadAt,
     DateTimeOffset VerifiedAt);
 
+// Distinguishes "nothing has ever been stored for this id" from "a snapshot is
+// stored but could not be read back" -- collapsing the two into a single null
+// is what let a corrupt or locked snapshot file be treated as a first read
+// (see PublishStateBundleUseCase.CollectSnapshotAsync): the caller must never
+// be able to mistake Unreadable for NotFound, because only NotFound is safe to
+// treat as "there is nothing to compare against yet".
+public abstract record SnapshotReadResult
+{
+    private SnapshotReadResult()
+    {
+    }
+
+    public sealed record Found(StoredSnapshot Snapshot) : SnapshotReadResult;
+
+    public sealed record NotFound : SnapshotReadResult;
+
+    public sealed record Unreadable(string Reason) : SnapshotReadResult;
+}
+
 public interface ISnapshotStore
 {
-    Task<StoredSnapshot?> GetAsync(string id, CancellationToken cancellationToken = default);
+    Task<SnapshotReadResult> GetAsync(string id, CancellationToken cancellationToken = default);
 
     Task SaveAsync(StoredSnapshot snapshot, CancellationToken cancellationToken = default);
 }

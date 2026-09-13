@@ -59,7 +59,7 @@ public class PublishStateBundleSnapshotTests
             .ReturnsAsync(GitFileFacts.Untracked());
 
         _snapshots.Setup(s => s.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((StoredSnapshot?)null);
+            .ReturnsAsync(new SnapshotReadResult.NotFound());
         _snapshots.Setup(s => s.SaveAsync(It.IsAny<StoredSnapshot>(), It.IsAny<CancellationToken>()))
             .Callback<StoredSnapshot, CancellationToken>((s, _) => _saved.Add(s))
             .Returns(Task.CompletedTask);
@@ -246,7 +246,12 @@ public class PublishStateBundleSnapshotTests
     private void StoreExistingYneSnapshot(
         string content, DateTimeOffset contentReadAt, DateTimeOffset verifiedAt) =>
         _snapshots.Setup(s => s.GetAsync("tasks/yne", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new StoredSnapshot("tasks/yne", content, contentReadAt, verifiedAt));
+            .ReturnsAsync(new SnapshotReadResult.Found(
+                new StoredSnapshot("tasks/yne", content, contentReadAt, verifiedAt)));
+
+    private void MakeYneSnapshotStoreUnreadable(string reason) =>
+        _snapshots.Setup(s => s.GetAsync("tasks/yne", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SnapshotReadResult.Unreadable(reason));
 
     private void FailYneRead() =>
         _google.Setup(g => g.ReadTaskListAsync(GoogleSnapshotPlan.YneListId, It.IsAny<CancellationToken>()))
@@ -362,6 +367,25 @@ public class PublishStateBundleSnapshotTests
         var stored = _saved.Single(s => s.Id == "tasks/yne");
         stored.ContentReadAt.Should().Be(contentReadAt);
         stored.VerifiedAt.Should().Be(Now);
+    }
+
+    [Fact]
+    public async Task An_unreadable_snapshot_store_does_not_let_a_re_read_claim_fresh_content()
+    {
+        // Content identical to what was actually last stored -- but the store
+        // cannot be read, so there is nothing to compare against. The bug this
+        // guards: previously, an unreadable snapshot was treated exactly like
+        // "no previous snapshot", which reset Modified to `now` and claimed a
+        // byte-identical read as freshly changed content.
+        MakeYneSnapshotStoreUnreadable("the snapshot file is corrupt");
+
+        await CreateUseCase().ExecuteAsync(Request());
+
+        _captured!.Manifest.Sources.Should().NotContain(s => s.Id == "tasks/yne");
+        _captured!.Files.Should().NotContain(f => f.RelativePath == "tasks/yne.json");
+        _captured!.Manifest.Failures.Should().Contain(f =>
+            f.Id == "tasks/yne" && f.Reason.Contains("the snapshot file is corrupt", StringComparison.Ordinal));
+        _saved.Should().NotContain(s => s.Id == "tasks/yne");
     }
 
     [Fact]

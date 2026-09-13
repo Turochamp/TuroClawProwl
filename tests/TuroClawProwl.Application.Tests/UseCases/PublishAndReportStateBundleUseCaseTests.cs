@@ -58,7 +58,7 @@ public class PublishAndReportStateBundleUseCaseTests
                 It.IsAny<IReadOnlyList<RegistryCalendar>>(), It.IsAny<CalendarWindow>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new GoogleReadResult.Failure("snapshots are out of scope in this test"));
         _snapshots.Setup(s => s.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((StoredSnapshot?)null);
+            .ReturnsAsync(new SnapshotReadResult.NotFound());
 
         SetUpFile(BundleLayout.RegistryRelativePath, Registry);
         SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts");

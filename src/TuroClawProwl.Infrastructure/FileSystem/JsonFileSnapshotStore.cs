@@ -24,27 +24,30 @@ public sealed class JsonFileSnapshotStore : ISnapshotStore
             "TuroClawProwl",
             "snapshots");
 
-    public async Task<StoredSnapshot?> GetAsync(string id, CancellationToken cancellationToken = default)
+    public async Task<SnapshotReadResult> GetAsync(string id, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
 
         var path = PathFor(id);
-        if (!File.Exists(path)) return null;
+        if (!File.Exists(path)) return new SnapshotReadResult.NotFound();
 
         try
         {
             var json = await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
             var record = JsonSerializer.Deserialize<SnapshotFile>(json, SerializerOptions);
-            if (record is null || record.Content is null) return null;
-            return new StoredSnapshot(id, record.Content, record.ReadAt, record.VerifiedAt);
+            if (record is null || record.Content is null)
+                return new SnapshotReadResult.Unreadable($"snapshot file at {path} did not deserialize as expected");
+
+            return new SnapshotReadResult.Found(
+                new StoredSnapshot(id, record.Content, record.ReadAt, record.VerifiedAt));
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
-            return null;
+            return new SnapshotReadResult.Unreadable(ex.Message);
         }
-        catch (IOException)
+        catch (IOException ex)
         {
-            return null;
+            return new SnapshotReadResult.Unreadable(ex.Message);
         }
     }
 

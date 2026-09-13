@@ -195,7 +195,24 @@ public sealed class PublishStateBundleUseCase
     {
         if (read is GoogleReadResult.Success success)
         {
-            var previous = await _snapshots.GetAsync(id, cancellationToken).ConfigureAwait(false);
+            var previousRead = await _snapshots.GetAsync(id, cancellationToken).ConfigureAwait(false);
+
+            // An unreadable snapshot must never be treated as "no previous
+            // snapshot": that would let the content timestamp reset to `now`
+            // and claim a byte-identical re-read as newly changed content, the
+            // one place `modified` and `verified` could otherwise collapse.
+            // There is nothing safe to compare against or retain here, so this
+            // read is dropped for the cycle rather than guessed at.
+            if (previousRead is SnapshotReadResult.Unreadable unreadable)
+            {
+                collected.Failures.Add(new BundleFailure(id, $"snapshot store unreadable: {unreadable.Reason}"));
+                _logger.LogWarning(
+                    "Snapshot {Id} previous content could not be read; skipping this cycle rather than " +
+                    "claiming the new read is freshly changed content: {Reason}", id, unreadable.Reason);
+                return;
+            }
+
+            var previous = previousRead is SnapshotReadResult.Found found ? found.Snapshot : null;
 
             // A byte-identical re-read keeps the content timestamp and advances
             // only the verification timestamp: the data is the same age, but it
@@ -238,13 +255,19 @@ public sealed class PublishStateBundleUseCase
         if (read is GoogleReadResult.Misconfigured misconfigured)
             collected.SnapshotMisconfiguration ??= misconfigured;
 
-        var previous = await _snapshots.GetAsync(id, cancellationToken).ConfigureAwait(false);
-        if (previous is null)
+        var previousRead = await _snapshots.GetAsync(id, cancellationToken).ConfigureAwait(false);
+        if (previousRead is not SnapshotReadResult.Found found)
         {
+            var storeDetail = previousRead is SnapshotReadResult.Unreadable unreadable
+                ? $"; previous snapshot unreadable: {unreadable.Reason}"
+                : string.Empty;
             _logger.LogWarning(
-                "Snapshot {Id} failed with no previous snapshot to retain: {Reason}", id, reason);
+                "Snapshot {Id} failed with no previous snapshot to retain: {Reason}{StoreDetail}",
+                id, reason, storeDetail);
             return;
         }
+
+        var previous = found.Snapshot;
 
         // The retained snapshot keeps BOTH original timestamps, and the store is
         // not rewritten. Advancing either would let a failed read look like a

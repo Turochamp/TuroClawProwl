@@ -51,7 +51,7 @@ public class BundleHeartbeatTests
             .ReturnsAsync(GitFileFacts.Untracked());
 
         _snapshots.Setup(s => s.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((StoredSnapshot?)null);
+            .ReturnsAsync(new SnapshotReadResult.NotFound());
         _snapshots.Setup(s => s.SaveAsync(It.IsAny<StoredSnapshot>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
