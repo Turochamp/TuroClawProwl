@@ -8,7 +8,6 @@ public sealed class TrayController : ITrayView, IDisposable
     private readonly IUiDispatcher _dispatcher;
     private readonly NotifyIcon _notifyIcon;
     private readonly ContextMenuStrip _menu;
-    private readonly ToolStripMenuItem _pushItem;
     private readonly ToolStripMenuItem _openControlUiItem;
     private readonly ToolStripMenuItem _restartItem;
     private readonly ToolStripMenuItem _settingsItem;
@@ -18,7 +17,6 @@ public sealed class TrayController : ITrayView, IDisposable
     private IReadOnlyCollection<TodayFileStatus> _todayFiles = Array.Empty<TodayFileStatus>();
     private PublishHealth _publish = new PublishHealth.NeverPublished();
 
-    public event EventHandler? PushTodayFilesRequested;
     public event EventHandler? OpenControlUiRequested;
     public event EventHandler? RestartGatewayRequested;
     public event EventHandler? OpenSettingsRequested;
@@ -28,10 +26,6 @@ public sealed class TrayController : ITrayView, IDisposable
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
         _dispatcher = dispatcher;
-
-        _pushItem = new ToolStripMenuItem("Push Today files");
-        _pushItem.Click += (_, _) => PushTodayFilesRequested?.Invoke(this, EventArgs.Empty);
-        _pushItem.Enabled = false;
 
         _openControlUiItem = new ToolStripMenuItem("Open Control UI");
         _openControlUiItem.Click += (_, _) => OpenControlUiRequested?.Invoke(this, EventArgs.Empty);
@@ -57,7 +51,6 @@ public sealed class TrayController : ITrayView, IDisposable
         _menu = new ContextMenuStrip();
         _menu.Items.AddRange(new ToolStripItem[]
         {
-            _pushItem,
             _openControlUiItem,
             _restartItem,
             new ToolStripSeparator(),
@@ -118,8 +111,6 @@ public sealed class TrayController : ITrayView, IDisposable
         _notifyIcon.Icon?.Dispose();
         _notifyIcon.Icon = TrayIconFactory.ForColor(color);
         _notifyIcon.Text = tooltip.Length > 127 ? tooltip[..127] : tooltip;
-
-        _pushItem.Enabled = _todayFiles.Any(f => f.NeedsAttention);
     }
 
     public void Dispose()

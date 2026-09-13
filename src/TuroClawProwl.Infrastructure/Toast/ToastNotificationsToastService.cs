@@ -1,5 +1,4 @@
 using Microsoft.Toolkit.Uwp.Notifications;
-using TuroClawProwl.Application;
 using TuroClawProwl.Application.Ports;
 using TuroClawProwl.Domain;
 
@@ -26,44 +25,6 @@ public sealed class ToastNotificationsToastService : IToastService
             .AddText(body)
             .Show();
         return Task.CompletedTask;
-    }
-
-    public Task NotifyPushSummaryAsync(PushSummary summary, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(summary);
-
-        // The toast API caps at 4 text lines; one is the header, leaving 3 for
-        // content. We collapse successes and failures into one line each to fit.
-        var builder = new ToastContentBuilder()
-            .AddText($"Today sync: {summary.SuccessCount} ok, {summary.FailureCount} failed");
-
-        var successes = summary.Outcomes.Where(o => o.IsSuccess).Select(o => RepoName(o.RepoKey)).ToArray();
-        if (successes.Length > 0)
-            builder.AddText("\u2713 " + FormatRepoList(successes, maxListed: 5));
-
-        var failures = summary.Outcomes.Where(o => !o.IsSuccess).ToArray();
-        if (failures.Length > 0)
-        {
-            var first = failures[0];
-            var line = $"\u2717 {RepoName(first.RepoKey)}: {Clip(first.Error ?? "unknown", 80)}";
-            if (failures.Length > 1) line += $" (+{failures.Length - 1} more)";
-            builder.AddText(line);
-        }
-
-        builder.Show();
-        return Task.CompletedTask;
-    }
-
-    private static string RepoName(string path)
-    {
-        var name = Path.GetFileName(path);
-        return string.IsNullOrEmpty(name) ? path : name;
-    }
-
-    private static string FormatRepoList(string[] items, int maxListed)
-    {
-        if (items.Length <= maxListed) return string.Join(", ", items);
-        return string.Join(", ", items.Take(maxListed)) + $" +{items.Length - maxListed} more";
     }
 
     public Task NotifyTodaySyncFailureAsync(

@@ -83,9 +83,6 @@ internal static class Program
         var resolveTodayUseCase = new ResolveTodayFileStatusesUseCase(
             gitRunner, trayController,
             loggerFactory.CreateLogger<ResolveTodayFileStatusesUseCase>());
-        var pushUseCase = new PushTodayFilesUseCase(
-            gitRunner, toasts,
-            loggerFactory.CreateLogger<PushTodayFilesUseCase>());
         var openControlUiUseCase = new OpenControlUiUseCase(
             new Uri(config.GatewayUrl), browserLauncher, tokenStore,
             loggerFactory.CreateLogger<OpenControlUiUseCase>());
@@ -94,7 +91,7 @@ internal static class Program
         var trackedForOrchestrator = TodayPathsResolver.ToOrchestratorPairs(watchedPaths);
 
         using var orchestrator = new AppOrchestrator(
-            config, healthUseCase, resolveTodayUseCase, pushUseCase,
+            config, healthUseCase, resolveTodayUseCase,
             openControlUiUseCase, restartUseCase,
             trackedForOrchestrator,
             loggerFactory.CreateLogger<AppOrchestrator>());
@@ -144,7 +141,6 @@ internal static class Program
             orchestrator, bundleSyncerHandle, googleReader, loggerFactory);
         configStore.ConfigSaved += (_, c) => _ = liveConfigApplier.ApplyAsync(c);
 
-        trayController.PushTodayFilesRequested += async (_, _) => await orchestrator.PushTodayFilesAsync();
         trayController.OpenControlUiRequested += async (_, _) => await orchestrator.OpenControlUiAsync();
         trayController.RestartGatewayRequested += async (_, _) => await orchestrator.RestartGatewayAsync();
         trayController.OpenSettingsRequested += (_, _) => ShowSettings(configStore, tokenStore, autostart);

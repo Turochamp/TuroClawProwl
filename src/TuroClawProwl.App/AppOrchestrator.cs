@@ -2,7 +2,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TuroClawProwl.Application;
 using TuroClawProwl.Application.UseCases;
-using TuroClawProwl.Domain;
 
 namespace TuroClawProwl.App;
 
@@ -12,7 +11,6 @@ public sealed class AppOrchestrator : IDisposable
 
     private readonly HandleHealthPollUseCase _healthUseCase;
     private readonly ResolveTodayFileStatusesUseCase _resolveTodayUseCase;
-    private readonly PushTodayFilesUseCase _pushUseCase;
     private readonly OpenControlUiUseCase _openControlUiUseCase;
     private readonly RestartGatewayUseCase _restartUseCase;
     private readonly ILogger<AppOrchestrator> _logger;
@@ -20,7 +18,6 @@ public sealed class AppOrchestrator : IDisposable
     private readonly System.Windows.Forms.Timer _pollTimer = new();
     private readonly System.Windows.Forms.Timer _todayTimer = new();
     private IReadOnlyList<(string AbsolutePath, string RepoPath)> _trackedFiles;
-    private IReadOnlyList<TodayFileStatus> _lastStatuses = Array.Empty<TodayFileStatus>();
     private int _resolveInFlight;
     private int _pollInFlight;
 
@@ -28,7 +25,6 @@ public sealed class AppOrchestrator : IDisposable
         TuroClawProwlConfig config,
         HandleHealthPollUseCase healthUseCase,
         ResolveTodayFileStatusesUseCase resolveTodayUseCase,
-        PushTodayFilesUseCase pushUseCase,
         OpenControlUiUseCase openControlUiUseCase,
         RestartGatewayUseCase restartUseCase,
         IReadOnlyList<(string AbsolutePath, string RepoPath)> trackedFiles,
@@ -36,7 +32,6 @@ public sealed class AppOrchestrator : IDisposable
     {
         _healthUseCase = healthUseCase;
         _resolveTodayUseCase = resolveTodayUseCase;
-        _pushUseCase = pushUseCase;
         _openControlUiUseCase = openControlUiUseCase;
         _restartUseCase = restartUseCase;
         _trackedFiles = trackedFiles;
@@ -59,12 +54,6 @@ public sealed class AppOrchestrator : IDisposable
             await ResolveTodayStatusesAsync();
             _todayTimer.Start();
         }
-    }
-
-    public async Task PushTodayFilesAsync()
-    {
-        await _pushUseCase.ExecuteAsync(_lastStatuses);
-        await ResolveTodayStatusesAsync();
     }
 
     public Task OpenControlUiAsync() => _openControlUiUseCase.ExecuteAsync();
@@ -93,7 +82,6 @@ public sealed class AppOrchestrator : IDisposable
         if (trackedFiles.Count == 0)
         {
             _todayTimer.Stop();
-            _lastStatuses = Array.Empty<TodayFileStatus>();
             return;
         }
 
@@ -116,7 +104,7 @@ public sealed class AppOrchestrator : IDisposable
         if (Interlocked.Exchange(ref _resolveInFlight, 1) == 1) return;
         try
         {
-            _lastStatuses = await _resolveTodayUseCase.ExecuteAsync(_trackedFiles);
+            await _resolveTodayUseCase.ExecuteAsync(_trackedFiles);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Today file status resolve threw"); }
         finally { Interlocked.Exchange(ref _resolveInFlight, 0); }
