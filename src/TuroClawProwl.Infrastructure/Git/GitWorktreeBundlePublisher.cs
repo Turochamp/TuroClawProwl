@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -17,6 +18,7 @@ public sealed class GitWorktreeBundlePublisher : IBundlePublisher
     public const string SourceRepoSetting = "hubRepoPath";
     public const string WorktreeSetting = "bundleWorktreePath";
     public const string BranchSetting = "bundlePublishBranch";
+    public const string GitExecutableSetting = "gitExecutable";
 
     private static readonly JsonSerializerOptions ManifestJsonOptions = new() { WriteIndented = true };
 
@@ -47,8 +49,22 @@ public sealed class GitWorktreeBundlePublisher : IBundlePublisher
 
     public async Task<string> GetSourceBranchAsync(CancellationToken cancellationToken = default)
     {
-        var head = await RunAsync(_sourceRepoPath, cancellationToken, "rev-parse", "--abbrev-ref", "HEAD")
-            .ConfigureAwait(false);
+        ProcessRunner.Result head;
+        try
+        {
+            head = await RunAsync(_sourceRepoPath, cancellationToken, "rev-parse", "--abbrev-ref", "HEAD")
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is Win32Exception or System.IO.FileNotFoundException)
+        {
+            // Swallowed the same way a non-zero exit already is: the source branch
+            // is cosmetic manifest content, not the outcome of the publish. The
+            // authoritative classification of a missing git executable happens in
+            // PublishAsync, which is what runs next and can actually report
+            // Misconfigured.
+            return "unknown";
+        }
+
         return head.ExitCode == 0 ? head.StdOut.Trim() : "unknown";
     }
 
@@ -58,74 +74,83 @@ public sealed class GitWorktreeBundlePublisher : IBundlePublisher
     {
         ArgumentNullException.ThrowIfNull(payload);
 
-        var prepared = await EnsureWorktreeAsync(cancellationToken).ConfigureAwait(false);
-        if (prepared is not null) return prepared;
-
-        var pinned = await PinToPublishTipAsync(cancellationToken).ConfigureAwait(false);
-        if (pinned is not null) return pinned;
-
-        // The source files are written and compared BEFORE the manifest, because
-        // published_at and the verified timestamps move on every run: comparing
-        // with the manifest in place would make an hourly snapshot refresh commit
-        // even when nothing changed. A manifest-only commit is allowed, but only
-        // when the caller asks for one via PublishEvenIfUnchanged.
-        await WriteBundleSourcesAsync(payload, cancellationToken).ConfigureAwait(false);
-
-        var add = await RunAsync(_worktreePath, cancellationToken,
-            "add", "--all", "--", BundleLayout.BundleDirectory).ConfigureAwait(false);
-        if (add.ExitCode != 0)
-            return new BundlePublishResult.Transient(Error(add));
-
-        var staged = await RunAsync(_worktreePath, cancellationToken, "diff", "--cached", "--quiet")
-            .ConfigureAwait(false);
-        var sourcesUnchanged = staged.ExitCode == 0;
-
-        if (sourcesUnchanged && !payload.PublishEvenIfUnchanged)
+        try
         {
-            var unchangedHead = await RunAsync(_worktreePath, cancellationToken, "rev-parse", "HEAD")
+            var prepared = await EnsureWorktreeAsync(cancellationToken).ConfigureAwait(false);
+            if (prepared is not null) return prepared;
+
+            var pinned = await PinToPublishTipAsync(cancellationToken).ConfigureAwait(false);
+            if (pinned is not null) return pinned;
+
+            // The source files are written and compared BEFORE the manifest, because
+            // published_at and the verified timestamps move on every run: comparing
+            // with the manifest in place would make an hourly snapshot refresh commit
+            // even when nothing changed. A manifest-only commit is allowed, but only
+            // when the caller asks for one via PublishEvenIfUnchanged.
+            await WriteBundleSourcesAsync(payload, cancellationToken).ConfigureAwait(false);
+
+            var add = await RunAsync(_worktreePath, cancellationToken,
+                "add", "--all", "--", BundleLayout.BundleDirectory).ConfigureAwait(false);
+            if (add.ExitCode != 0)
+                return new BundlePublishResult.Transient(Error(add));
+
+            var staged = await RunAsync(_worktreePath, cancellationToken, "diff", "--cached", "--quiet")
                 .ConfigureAwait(false);
-            _logger.LogInformation("State bundle unchanged; nothing to publish");
-            return new BundlePublishResult.Success(unchangedHead.StdOut.Trim(), 0);
-        }
+            var sourcesUnchanged = staged.ExitCode == 0;
 
-        if (sourcesUnchanged)
-        {
+            if (sourcesUnchanged && !payload.PublishEvenIfUnchanged)
+            {
+                var unchangedHead = await RunAsync(_worktreePath, cancellationToken, "rev-parse", "HEAD")
+                    .ConfigureAwait(false);
+                _logger.LogInformation("State bundle unchanged; nothing to publish");
+                return new BundlePublishResult.Success(unchangedHead.StdOut.Trim(), 0);
+            }
+
+            if (sourcesUnchanged)
+            {
+                _logger.LogInformation(
+                    "State bundle content unchanged; publishing a heartbeat so the verified timestamps stay on record");
+            }
+
+            await WriteManifestAsync(payload, cancellationToken).ConfigureAwait(false);
+
+            var addManifest = await RunAsync(_worktreePath, cancellationToken,
+                "add", "--all", "--", BundleLayout.BundleDirectory).ConfigureAwait(false);
+            if (addManifest.ExitCode != 0)
+                return new BundlePublishResult.Transient(Error(addManifest));
+
+            var stamp = payload.Manifest.PublishedAt.ToString(
+                "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+            var commit = await RunAsync(
+                    _worktreePath, cancellationToken, "commit", "-m", "auto: state bundle " + stamp)
+                .ConfigureAwait(false);
+            if (commit.ExitCode != 0)
+                return new BundlePublishResult.Transient(Error(commit));
+
+            var sha = await RunAsync(_worktreePath, cancellationToken, "rev-parse", "HEAD").ConfigureAwait(false);
+
+            var push = await RunAsync(_worktreePath, cancellationToken,
+                "push", "origin", $"HEAD:refs/heads/{_publishBranch}").ConfigureAwait(false);
+            if (push.ExitCode != 0)
+            {
+                var error = Error(push);
+                return LooksLikeMissingRemote(error)
+                    ? new BundlePublishResult.Misconfigured(SourceRepoSetting, error)
+                    : new BundlePublishResult.Transient(error);
+            }
+
+            var fileCount = payload.Files.Count + 1;
             _logger.LogInformation(
-                "State bundle content unchanged; publishing a heartbeat so the verified timestamps stay on record");
+                "State bundle published to {Branch} as {Sha} with {FileCount} files",
+                _publishBranch, sha.StdOut.Trim(), fileCount);
+
+            return new BundlePublishResult.Success(sha.StdOut.Trim(), fileCount);
         }
-
-        await WriteManifestAsync(payload, cancellationToken).ConfigureAwait(false);
-
-        var addManifest = await RunAsync(_worktreePath, cancellationToken,
-            "add", "--all", "--", BundleLayout.BundleDirectory).ConfigureAwait(false);
-        if (addManifest.ExitCode != 0)
-            return new BundlePublishResult.Transient(Error(addManifest));
-
-        var stamp = payload.Manifest.PublishedAt.ToString(
-            "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
-        var commit = await RunAsync(_worktreePath, cancellationToken, "commit", "-m", "auto: state bundle " + stamp)
-            .ConfigureAwait(false);
-        if (commit.ExitCode != 0)
-            return new BundlePublishResult.Transient(Error(commit));
-
-        var sha = await RunAsync(_worktreePath, cancellationToken, "rev-parse", "HEAD").ConfigureAwait(false);
-
-        var push = await RunAsync(_worktreePath, cancellationToken,
-            "push", "origin", $"HEAD:refs/heads/{_publishBranch}").ConfigureAwait(false);
-        if (push.ExitCode != 0)
+        catch (Exception ex) when (ex is Win32Exception or System.IO.FileNotFoundException)
         {
-            var error = Error(push);
-            return LooksLikeMissingRemote(error)
-                ? new BundlePublishResult.Misconfigured(SourceRepoSetting, error)
-                : new BundlePublishResult.Transient(error);
+            return new BundlePublishResult.Misconfigured(
+                GitExecutableSetting, $"{_gitExecutable} could not be started: {ex.Message}");
         }
-
-        var fileCount = payload.Files.Count + 1;
-        _logger.LogInformation(
-            "State bundle published to {Branch} as {Sha} with {FileCount} files",
-            _publishBranch, sha.StdOut.Trim(), fileCount);
-
-        return new BundlePublishResult.Success(sha.StdOut.Trim(), fileCount);
     }
 
     private async Task<BundlePublishResult?> EnsureWorktreeAsync(CancellationToken cancellationToken)

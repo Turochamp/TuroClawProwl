@@ -326,6 +326,42 @@ public class GitWorktreeBundlePublisherTests
     }
 
     [Fact]
+    public async Task A_git_executable_missing_from_path_is_reported_as_a_misconfiguration()
+    {
+        using var repo = new TempGitRepo();
+        repo.SetUpBareRemoteAndPush();
+        repo.Run("checkout", "-b", "feature/humanize-design");
+        using var home = new TempDirectory();
+        var publisher = new GitWorktreeBundlePublisher(
+            repo.Path,
+            Path.Combine(home.Path, "bundle-worktree"),
+            "main",
+            gitExecutable: "turoclawprowl-definitely-not-a-real-git-executable");
+
+        var result = await publisher.PublishAsync(PayloadOn("feature/humanize-design"));
+
+        var misconfigured = result.Should().BeOfType<BundlePublishResult.Misconfigured>().Subject;
+        misconfigured.SettingName.Should().Be(GitWorktreeBundlePublisher.GitExecutableSetting);
+        misconfigured.Detail.Should().Contain("turoclawprowl-definitely-not-a-real-git-executable");
+    }
+
+    [Fact]
+    public async Task A_git_executable_missing_from_path_makes_the_source_branch_unknown_rather_than_throwing()
+    {
+        using var repo = new TempGitRepo();
+        repo.Run("checkout", "-b", "feature/humanize-design");
+        var publisher = new GitWorktreeBundlePublisher(
+            repo.Path,
+            repo.Path,
+            "main",
+            gitExecutable: "turoclawprowl-definitely-not-a-real-git-executable");
+
+        var branch = await publisher.GetSourceBranchAsync();
+
+        branch.Should().Be("unknown");
+    }
+
+    [Fact]
     public async Task A_republish_of_byte_identical_content_before_the_heartbeat_produces_no_commit()
     {
         using var repo = new TempGitRepo();

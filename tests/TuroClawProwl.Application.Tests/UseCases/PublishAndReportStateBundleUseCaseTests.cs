@@ -173,13 +173,16 @@ public class PublishAndReportStateBundleUseCaseTests
     [Fact]
     public async Task A_publish_that_throws_is_reported_as_a_transient_failure_instead_of_escaping()
     {
+        // A genuinely unknown failure -- not one of the classified cases (a missing
+        // git/gws executable is now classified as Misconfigured by the publisher
+        // itself before it can reach here; see GitWorktreeBundlePublisherTests).
         _publisher.Setup(p => p.PublishAsync(It.IsAny<BundlePayload>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("git executable not found on PATH"));
+            .ThrowsAsync(new InvalidOperationException("an unexpected, unclassified bug"));
 
         var result = await CreateUseCase().ExecuteAsync(Request());
 
         result.Should().BeOfType<BundlePublishResult.Transient>()
-            .Which.Detail.Should().Be("git executable not found on PATH");
+            .Which.Detail.Should().Be("an unexpected, unclassified bug");
         _trayStates.Should().ContainSingle().Subject.Should().BeOfType<PublishHealth.Failed>();
         _toasted.Should().ContainSingle().Which.IsMisconfiguration.Should().BeFalse();
     }
