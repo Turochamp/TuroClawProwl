@@ -37,6 +37,7 @@ public sealed class SettingsForm : Form
     private readonly NumericUpDown _snapshotMinutes = new() { Minimum = 5, Maximum = 1440, Value = 60, Width = 70 };
     private readonly NumericUpDown _heartbeatMinutes = new() { Minimum = 15, Maximum = 10080, Value = 360, Width = 70 };
     private readonly TextBox _gwsExecutablePath = new() { Dock = DockStyle.Fill };
+    private readonly TextBox _gitExecutablePath = new() { Dock = DockStyle.Fill };
 
     // Test buttons + status labels
     private readonly Button _testGatewayButton = new()
@@ -208,6 +209,7 @@ public sealed class SettingsForm : Form
         AddField(grid, "Bundle worktree:", _bundleWorktreePath);
         AddField(grid, "Publish branch:", _bundlePublishBranch);
         AddField(grid, "gws path:", _gwsExecutablePath);
+        AddField(grid, "git path:", _gitExecutablePath);
         AddField(grid, "Snapshot interval (min):", _snapshotMinutes);
         AddField(grid, "Heartbeat interval (min):", _heartbeatMinutes);
 
@@ -298,6 +300,7 @@ public sealed class SettingsForm : Form
         _bundleWorktreePath.Text = config.BundleWorktreePath;
         _bundlePublishBranch.Text = config.BundlePublishBranch;
         _gwsExecutablePath.Text = config.GwsExecutablePath;
+        _gitExecutablePath.Text = config.GitExecutablePath;
         _snapshotMinutes.Value = Math.Clamp((decimal)config.SnapshotInterval.TotalMinutes, 5, 1440);
         _heartbeatMinutes.Value = Math.Clamp((decimal)config.HeartbeatInterval.TotalMinutes, 15, 10080);
 
@@ -415,6 +418,9 @@ public sealed class SettingsForm : Form
             GwsExecutablePath = string.IsNullOrWhiteSpace(_gwsExecutablePath.Text)
                 ? "C:/Users/micha/bin/gws.cmd"
                 : _gwsExecutablePath.Text.Trim(),
+            GitExecutablePath = string.IsNullOrWhiteSpace(_gitExecutablePath.Text)
+                ? "git"
+                : _gitExecutablePath.Text.Trim(),
             SnapshotInterval = TimeSpan.FromMinutes((double)_snapshotMinutes.Value),
             HeartbeatInterval = TimeSpan.FromMinutes((double)_heartbeatMinutes.Value),
         };

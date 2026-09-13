@@ -129,6 +129,14 @@ public class JsonConfigStoreTests
     }
 
     [Fact]
+    public void The_git_executable_defaults_to_the_bare_command()
+    {
+        var config = new TuroClawProwlConfig();
+
+        config.GitExecutablePath.Should().Be("git");
+    }
+
+    [Fact]
     public void An_interval_below_its_floor_is_raised_to_it()
     {
         var config = new TuroClawProwlConfig
@@ -180,6 +188,7 @@ public class JsonConfigStoreTests
             SnapshotInterval = TimeSpan.FromMinutes(30),
             HeartbeatInterval = TimeSpan.FromHours(6),
             GwsExecutablePath = "C:/Users/micha/bin/gws.cmd",
+            GitExecutablePath = @"C:\Program Files\Git\bin\git.exe",
         };
 
         await store.SaveAsync(original);
@@ -191,6 +200,7 @@ public class JsonConfigStoreTests
         loaded.SnapshotInterval.Should().Be(TimeSpan.FromMinutes(30));
         loaded.HeartbeatInterval.Should().Be(TimeSpan.FromHours(6));
         loaded.GwsExecutablePath.Should().Be("C:/Users/micha/bin/gws.cmd");
+        loaded.GitExecutablePath.Should().Be(@"C:\Program Files\Git\bin\git.exe");
         loaded.Should().Be(original);
     }
 
@@ -216,6 +226,7 @@ public class JsonConfigStoreTests
         json.Should().Contain("\"snapshotInterval\"");
         json.Should().Contain("\"heartbeatInterval\"");
         json.Should().Contain("\"gwsExecutablePath\"");
+        json.Should().Contain("\"gitExecutablePath\"");
     }
 
     [Fact]
@@ -245,6 +256,7 @@ public class JsonConfigStoreTests
         loaded.SnapshotInterval.Should().Be(TimeSpan.FromHours(1));
         loaded.HeartbeatInterval.Should().Be(TimeSpan.FromHours(6));
         loaded.GwsExecutablePath.Should().Be("C:/Users/micha/bin/gws.cmd");
+        loaded.GitExecutablePath.Should().Be("git");
         loaded.TodayCcaRoot.Should().Be(@"C:\Git\ClaudeCodeAssistants");
     }
 }

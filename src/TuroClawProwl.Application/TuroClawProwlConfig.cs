@@ -16,4 +16,5 @@ public sealed record TuroClawProwlConfig
     public TimeSpan SnapshotInterval { get; init; } = TimeSpan.FromHours(1);
     public TimeSpan HeartbeatInterval { get; init; } = TimeSpan.FromHours(6);
     public string GwsExecutablePath { get; init; } = "C:/Users/micha/bin/gws.cmd";
+    public string GitExecutablePath { get; init; } = "git";
 }

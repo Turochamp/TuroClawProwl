@@ -105,12 +105,17 @@ internal static class Program
             trayController, toasts, clock,
             loggerFactory.CreateLogger<ReportBundlePublishUseCase>());
 
+        var gitExecutablePath = string.IsNullOrWhiteSpace(config.GitExecutablePath)
+            ? "git"
+            : config.GitExecutablePath;
+
         IBundlePublisher bundlePublisher = string.IsNullOrWhiteSpace(hubRepoPath)
             ? new UnconfiguredBundlePublisher()
             : new GitWorktreeBundlePublisher(
                 hubRepoPath,
                 BundleSourcePathsResolver.ResolveWorktreePath(config),
                 BundleSourcePathsResolver.ResolvePublishBranch(config),
+                gitExecutable: gitExecutablePath,
                 logger: loggerFactory.CreateLogger<GitWorktreeBundlePublisher>());
 
         var googleReader = new GwsWorkspaceReader(
@@ -121,7 +126,7 @@ internal static class Program
 
         var publishBundleUseCase = new PublishStateBundleUseCase(
             new FileSystemSourceFileReader(),
-            new GitFileFactsReader(),
+            new GitFileFactsReader(gitExecutablePath),
             googleReader,
             new JsonFileSnapshotStore(JsonFileSnapshotStore.DefaultDirectory()),
             bundlePublisher,

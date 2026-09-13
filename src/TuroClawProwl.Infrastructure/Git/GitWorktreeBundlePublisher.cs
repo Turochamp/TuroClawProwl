@@ -18,7 +18,7 @@ public sealed class GitWorktreeBundlePublisher : IBundlePublisher
     public const string SourceRepoSetting = "hubRepoPath";
     public const string WorktreeSetting = "bundleWorktreePath";
     public const string BranchSetting = "bundlePublishBranch";
-    public const string GitExecutableSetting = "gitExecutable";
+    public const string GitExecutableSetting = "gitExecutablePath";
 
     private static readonly JsonSerializerOptions ManifestJsonOptions = new() { WriteIndented = true };
 
