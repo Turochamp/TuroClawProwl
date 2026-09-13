@@ -146,4 +146,30 @@ public class ReportBundlePublishUseCaseTests
 
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
+
+    [Fact]
+    public async Task A_toast_that_throws_does_not_escape_the_use_case()
+    {
+        _toasts.Setup(t => t.NotifyBundlePublishFailureAsync(
+                It.IsAny<PublishHealth.Failed>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("toast service unavailable"));
+        var useCase = CreateUseCase();
+
+        await useCase.ExecuteAsync(new BundlePublishResult.Transient("network down"));
+
+        useCase.Health.Should().BeOfType<PublishHealth.Failed>();
+    }
+
+    [Fact]
+    public async Task A_canceled_toast_propagates_instead_of_being_logged_as_a_failure()
+    {
+        _toasts.Setup(t => t.NotifyBundlePublishFailureAsync(
+                It.IsAny<PublishHealth.Failed>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+        var useCase = CreateUseCase();
+
+        Func<Task> act = () => useCase.ExecuteAsync(new BundlePublishResult.Transient("network down"));
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
 }

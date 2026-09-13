@@ -19,11 +19,38 @@ internal static class ProcessRunner
         var stdOutTask = proc.StandardOutput.ReadToEndAsync(cancellationToken);
         var stdErrTask = proc.StandardError.ReadToEndAsync(cancellationToken);
 
-        await proc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await proc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // stdOutTask/stdErrTask were started with the same token, so they are
+            // about to fault or cancel too, and this rethrow means neither is
+            // awaited below. Observe them here so that fault never surfaces later
+            // as an unobserved task exception, then let the cancellation propagate.
+            await ObserveAsync(stdOutTask).ConfigureAwait(false);
+            await ObserveAsync(stdErrTask).ConfigureAwait(false);
+            throw;
+        }
+
         var stdOut = await stdOutTask.ConfigureAwait(false);
         var stdErr = await stdErrTask.ConfigureAwait(false);
 
         return new Result(proc.ExitCode, stdOut, stdErr);
+    }
+
+    private static async Task ObserveAsync(Task task)
+    {
+        try
+        {
+            await task.ConfigureAwait(false);
+        }
+        catch
+        {
+            // The cancellation this task carries is reported by the rethrow above;
+            // this exists solely to observe the fault so it is never unobserved.
+        }
     }
 
     internal static ProcessStartInfo BuildStartInfo(

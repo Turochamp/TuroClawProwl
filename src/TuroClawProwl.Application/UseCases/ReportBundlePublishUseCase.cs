@@ -97,6 +97,10 @@ public sealed class ReportBundlePublishUseCase
         {
             await _toasts.NotifyBundlePublishFailureAsync(failed, cancellationToken).ConfigureAwait(false);
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Could not dispatch the bundle publish failure toast");
