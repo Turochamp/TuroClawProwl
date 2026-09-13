@@ -174,15 +174,20 @@ public sealed class GitWorktreeBundlePublisher : IBundlePublisher
                     case WorktreeOwnership.MissingOrInvalidMarker:
                         // Structurally a real, registered linked worktree of this exact
                         // source repo -- but this publisher never marked it as its own
-                        // (or the marker is empty/unreadable/for a different repo).
-                        // Name the actual remedy: it is a dead end otherwise, since
-                        // adoption is the only path that reuses an existing directory.
+                        // (or the marker is empty/unreadable/for a different repo). That
+                        // second case is exactly what this guard exists to catch: a
+                        // worktree the USER created themselves, so leading with "delete
+                        // this worktree" would be destructive advice most of the time it
+                        // fires. Lead with the safe remedy -- point the setting elsewhere
+                        // -- and mention deletion second, for the narrower case where this
+                        // publisher made the worktree but its own marker was lost.
                         return new BundlePublishResult.Misconfigured(
                             WorktreeSetting,
                             $"{_worktreePath} is a linked worktree of {_sourceRepoPath}, but is not " +
                             "recognized as this publisher's own (its ownership marker is missing, " +
-                            "unreadable, empty, or names a different repository); delete this worktree " +
-                            "or point bundleWorktreePath at a different, unused directory");
+                            "unreadable, empty, or names a different repository); point " +
+                            "bundleWorktreePath at a different, unused directory, or delete this " +
+                            "worktree if this publisher created it");
 
                     default:
                         return new BundlePublishResult.Misconfigured(
