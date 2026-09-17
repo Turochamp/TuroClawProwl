@@ -45,6 +45,9 @@ public static class RegistryParser
     private const string CalendarsHeading = "### Calendars";
     private const int CalendarColumnCount = 4;
     private const string ContextOnlyMarker = "context only";
+    // A calendar the registry lists before it is readable would otherwise
+    // surface as a read failure in every brief until access is granted.
+    private const string PendingMarker = "pending";
 
     public static IReadOnlyList<RegistryCalendar> ParseCalendars(string registryMarkdown)
     {
@@ -76,6 +79,7 @@ public static class RegistryParser
             if (name.Length == 0 || calendarId.Length == 0) continue;
             if (!calendarId.Contains('@', StringComparison.Ordinal)) continue;
             if (use.Contains(ContextOnlyMarker, StringComparison.OrdinalIgnoreCase)) continue;
+            if (use.Contains(PendingMarker, StringComparison.OrdinalIgnoreCase)) continue;
 
             calendars.Add(new RegistryCalendar(name, branch, calendarId));
         }
