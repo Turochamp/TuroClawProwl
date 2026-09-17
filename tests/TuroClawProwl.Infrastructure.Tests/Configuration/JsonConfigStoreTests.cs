@@ -259,4 +259,34 @@ public class JsonConfigStoreTests
         loaded.GitExecutablePath.Should().Be("git");
         loaded.TodayCcaRoot.Should().Be(@"C:\Git\ClaudeCodeAssistants");
     }
+
+    [Fact]
+    public async Task A_config_still_carrying_the_removed_today_keys_loads_and_drops_them_on_save()
+    {
+        using var tmp = new TempDirectory();
+        var configPath = Path.Combine(tmp.Path, "config.json");
+        await File.WriteAllTextAsync(configPath, """
+            {
+              "gatewayUrl": "http://192.168.1.121:18789/",
+              "todaySkillPath": "C:\\Git\\ClaudeCodeAssistants\\.claude\\skills\\today\\SKILL.md",
+              "todayCcaRoot": "C:\\Git\\ClaudeCodeAssistants",
+              "todayCrmIndexPath": "C:\\Git\\ClaudeCodeAssistants\\crm\\data\\contacts\\_index.md",
+              "hubRepoPath": "C:\\Git\\ClaudeCodeAssistants"
+            }
+            """);
+        var store = new JsonConfigStore(configPath);
+
+        var loaded = await store.LoadAsync();
+
+        loaded.GatewayUrl.Should().Be("http://192.168.1.121:18789/");
+        loaded.TodayCcaRoot.Should().Be(@"C:\Git\ClaudeCodeAssistants");
+        loaded.HubRepoPath.Should().Be(@"C:\Git\ClaudeCodeAssistants");
+        File.Exists(configPath).Should().BeTrue("a config with unknown keys is not corrupt");
+
+        await store.SaveAsync(loaded);
+        var json = await File.ReadAllTextAsync(configPath);
+        json.Should().NotContain("todaySkillPath");
+        json.Should().NotContain("todayCrmIndexPath");
+        json.Should().Contain("\"todayCcaRoot\"");
+    }
 }
