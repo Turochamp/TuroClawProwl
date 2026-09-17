@@ -50,38 +50,13 @@ internal static class BundleSourcePathsResolver
             return [];
         }
 
-        var localNow = DateTimeOffset.Now;
-        var paths = BundleSourcePlan.FixedSources(localNow)
-            .Select(i => Absolute(hubRoot, i.SourceRelativePath))
-            .ToList();
-
-        var registryPath = Absolute(hubRoot, BundleLayout.RegistryRelativePath);
-        if (!File.Exists(registryPath))
-        {
-            logger.LogWarning(
-                "Registry not found at {Path}; watching the fixed sources only", registryPath);
-            return Distinct(paths);
-        }
-
-        try
-        {
-            var registry = File.ReadAllText(registryPath);
-            foreach (var item in BundleSourcePlan.FromRegistry(registry))
-                paths.Add(Absolute(hubRoot, item.SourceRelativePath));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            logger.LogWarning(ex, "Could not read the registry at {Path}", registryPath);
-        }
-
-        var resolved = Distinct(paths);
-        logger.LogInformation("State bundle watching {Count} source files", resolved.Count);
+        var resolved = BundleSourcePlan.WatchedRelativePaths
+            .Select(relative => Absolute(hubRoot, relative))
+            .ToArray();
+        logger.LogInformation("State bundle watching {Count} source files", resolved.Length);
         return resolved;
     }
 
     private static string Absolute(string hubRoot, string relative) =>
         Path.Combine(hubRoot, relative.Replace('/', Path.DirectorySeparatorChar));
-
-    private static IReadOnlyList<string> Distinct(IEnumerable<string> paths) =>
-        paths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 }

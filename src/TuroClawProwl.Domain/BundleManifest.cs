@@ -2,18 +2,18 @@ using System.Text.Json.Serialization;
 
 namespace TuroClawProwl.Domain;
 
-// Path is where the source lives in the working tree; BundlePath is where its
-// copy lives inside hub/bundle/. Both are stated so the renderer never infers a
-// file location from an id.
+// Path is the source's API identity; BundlePath is where its copy lives inside
+// hub/bundle/. Both are stated so the renderer never infers a file location from
+// an id.
 //
 // Modified is when the content last changed. Verified is when it was last
-// confirmed current. They are equal for a file source and diverge for a snapshot
-// the moment a re-read returns identical content; collapsing them would either
-// claim freshness the content does not have or call correct data stale. A failed
-// read advances neither.
+// confirmed current. They diverge the moment a re-read returns identical
+// content; collapsing them would either claim freshness the content does not
+// have or call correct data stale. A failed read advances neither.
 //
-// Committed is the author date of the last commit touching the source, and is
-// null where the file is untracked or its directory is not a repository at all.
+// Committed and Dirty described hub file sources, which are no longer published.
+// They stay in schema version 1 so existing readers keep parsing, and every
+// snapshot source carries null and false.
 public sealed record BundleSource(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("path")] string Path,
