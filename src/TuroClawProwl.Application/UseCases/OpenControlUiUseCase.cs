@@ -6,10 +6,10 @@ namespace TuroClawProwl.Application.UseCases;
 
 public sealed class OpenControlUiUseCase
 {
-    private readonly Uri _gatewayBaseUrl;
     private readonly IBrowserLauncher _browser;
     private readonly ITokenStore _tokenStore;
     private readonly ILogger<OpenControlUiUseCase> _logger;
+    private Uri _gatewayBaseUrl;
 
     public OpenControlUiUseCase(
         Uri gatewayBaseUrl,
@@ -27,12 +27,19 @@ public sealed class OpenControlUiUseCase
         _logger = logger ?? NullLogger<OpenControlUiUseCase>.Instance;
     }
 
+    public void SetGatewayBaseUrl(Uri gatewayBaseUrl)
+    {
+        ArgumentNullException.ThrowIfNull(gatewayBaseUrl);
+        Volatile.Write(ref _gatewayBaseUrl, gatewayBaseUrl);
+    }
+
     public async Task ExecuteAsync(CancellationToken cancellationToken = default)
     {
+        var baseUrl = Volatile.Read(ref _gatewayBaseUrl);
         var token = await _tokenStore.GetTokenAsync(cancellationToken).ConfigureAwait(false) ?? string.Empty;
-        var url = BuildControlUiUrl(_gatewayBaseUrl, token);
+        var url = BuildControlUiUrl(baseUrl, token);
 
-        _logger.LogInformation("Opening Control UI at {Url}", new Uri(_gatewayBaseUrl, "/"));
+        _logger.LogInformation("Opening Control UI at {Url}", new Uri(baseUrl, "/"));
         await _browser.OpenAsync(url, cancellationToken).ConfigureAwait(false);
     }
 

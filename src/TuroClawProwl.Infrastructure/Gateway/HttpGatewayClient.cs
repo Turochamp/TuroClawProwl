@@ -12,8 +12,8 @@ public sealed class HttpGatewayClient : IGatewayClient
 {
     private readonly HttpClient _http;
     private readonly ITokenStore _tokenStore;
-    private readonly Uri _healthEndpoint;
     private readonly ResiliencePipeline _pipeline;
+    private Uri _healthEndpoint;
 
     public HttpGatewayClient(
         HttpClient http,
@@ -29,6 +29,17 @@ public sealed class HttpGatewayClient : IGatewayClient
         _tokenStore = tokenStore;
         _healthEndpoint = new Uri(baseAddress, "health");
         _pipeline = pipeline ?? ResiliencePipeline.Empty;
+    }
+
+    // Atomically swap the gateway base URL. Used by LiveConfigApplier so a
+    // settings save takes effect on the next poll without rebuilding the
+    // HttpClient or the Polly pipeline. Reads of _healthEndpoint inside
+    // SendOnceAsync are a single reference-typed field load and are safe
+    // without an explicit lock.
+    public void SetBaseAddress(Uri baseAddress)
+    {
+        ArgumentNullException.ThrowIfNull(baseAddress);
+        Volatile.Write(ref _healthEndpoint, new Uri(baseAddress, "health"));
     }
 
     public static ResiliencePipeline BuildDefaultRetryPipeline(ILogger? logger = null)
@@ -77,7 +88,8 @@ public sealed class HttpGatewayClient : IGatewayClient
 
     private async Task<GatewayPollResult> SendOnceAsync(CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, _healthEndpoint);
+        var endpoint = Volatile.Read(ref _healthEndpoint);
+        using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
         var token = await _tokenStore.GetTokenAsync(cancellationToken).ConfigureAwait(false);
         if (!string.IsNullOrEmpty(token))
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);

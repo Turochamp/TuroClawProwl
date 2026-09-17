@@ -14,6 +14,8 @@ public sealed class JsonConfigStore : IConfigStore
 
     private readonly string _configPath;
 
+    public event EventHandler<TuroClawProwlConfig>? ConfigSaved;
+
     public JsonConfigStore(string configPath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
@@ -66,6 +68,8 @@ public sealed class JsonConfigStore : IConfigStore
 
         await File.WriteAllTextAsync(tmpPath, json, cancellationToken).ConfigureAwait(false);
         File.Move(tmpPath, _configPath, overwrite: true);
+
+        ConfigSaved?.Invoke(this, config);
     }
 
     private void QuarantineCorruptFile()

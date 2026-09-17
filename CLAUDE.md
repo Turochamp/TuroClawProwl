@@ -50,7 +50,8 @@ Before declaring a change done:
 
 ## Known gotchas — do not rediscover these
 
-- **`.NET HttpClient` does not resolve mDNS.** Use the IP for the gateway URL (`http://192.168.1.43:18789/`), not `Fox.local`. `ssh.exe` resolves mDNS fine, so SSH targets can stay on `.local`.
+- **`.NET HttpClient` does not resolve mDNS reliably.** Use the IP for the gateway URL (`http://192.168.1.121:18789/` — the DHCP reservation pins `fox` to that address), not `fox.local`. `ssh.exe` resolves mDNS fine, so SSH targets can stay on `.local`.
+- **Mac power management masquerades as health flapping.** macOS defaults (`sleep 1`, `powernap 1`) sleep an idle Mac Mini after 1 minute and wake it briefly every ~14 minutes for "Maintenance Sleep". Symptom in `prowl-*.log`: a regular ~2 min `Healthy` / ~13 min `Unreachable: timeout` cycle that lines up exactly with `pmset -g log` Sleep/DarkWake entries. Fix on the Mac, not in the app: `sudo pmset -a sleep 0 disksleep 0 powernap 0`. The in-app flap suppression only papers over residual Wi-Fi/OS-update blips.
 - **OpenClaw Gateway binds loopback by default.** For LAN access set `gateway.bind = "lan"` in `~/.openclaw-data/openclaw.json` on the Mac and `launchctl kickstart` the service.
 - **`ToastContentBuilder` caps at 4 text lines total** (header + 3 content). `NotifyPushSummaryAsync` collapses to header + 1 success line + 1 failure line for that reason — don't let it grow.
 - **WinForms dock order**: `DockStyle.Bottom` controls must be `Controls.Add`'d **before** `DockStyle.Fill` or they'll be occluded. See [SettingsForm.cs](src/TuroClawProwl.App/SettingsForm.cs) for the pattern.

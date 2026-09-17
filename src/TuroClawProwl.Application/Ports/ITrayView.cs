@@ -9,4 +9,6 @@ public interface ITrayView
     Task SetTodayFileStatusesAsync(
         IReadOnlyCollection<TodayFileStatus> statuses,
         CancellationToken cancellationToken = default);
+
+    Task SetPublishHealthAsync(PublishHealth publish, CancellationToken cancellationToken = default);
 }

@@ -8,12 +8,4 @@ public interface IGitRunner
         string repoPath,
         string relativePath,
         CancellationToken cancellationToken = default);
-
-    Task<GitPushResult> PushAsync(string repoPath, CancellationToken cancellationToken = default);
-
-    Task<GitCommitResult> CommitPathAsync(
-        string repoPath,
-        string relativePath,
-        string message,
-        CancellationToken cancellationToken = default);
 }

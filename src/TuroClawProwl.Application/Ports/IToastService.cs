@@ -8,11 +8,16 @@ public interface IToastService
         StateTransition<GatewayHealth> transition,
         CancellationToken cancellationToken = default);
 
-    Task NotifyPushSummaryAsync(
-        PushSummary summary,
-        CancellationToken cancellationToken = default);
-
     Task NotifyGatewayRestartResultAsync(
         SshCommandResult result,
+        CancellationToken cancellationToken = default);
+
+    Task NotifyTodaySyncFailureAsync(
+        string title,
+        string detail,
+        CancellationToken cancellationToken = default);
+
+    Task NotifyBundlePublishFailureAsync(
+        PublishHealth.Failed failure,
         CancellationToken cancellationToken = default);
 }

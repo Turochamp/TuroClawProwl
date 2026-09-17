@@ -10,4 +10,11 @@ public sealed record TuroClawProwlConfig
     public string TodaySkillPath { get; init; } = "";
     public string TodayCcaRoot { get; init; } = "";
     public string TodayCrmIndexPath { get; init; } = "";
+    public string HubRepoPath { get; init; } = "";
+    public string BundleWorktreePath { get; init; } = "";
+    public string BundlePublishBranch { get; init; } = "main";
+    public TimeSpan SnapshotInterval { get; init; } = TimeSpan.FromHours(1);
+    public TimeSpan HeartbeatInterval { get; init; } = TimeSpan.FromHours(6);
+    public string GwsExecutablePath { get; init; } = "C:/Users/micha/bin/gws.cmd";
+    public string GitExecutablePath { get; init; } = "git";
 }
