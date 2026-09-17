@@ -56,8 +56,6 @@ Before declaring a change done:
 - **`ToastContentBuilder` caps at 4 text lines total** (header + 3 content). `NotifyPushSummaryAsync` collapses to header + 1 success line + 1 failure line for that reason — don't let it grow.
 - **WinForms dock order**: `DockStyle.Bottom` controls must be `Controls.Add`'d **before** `DockStyle.Fill` or they'll be occluded. See [SettingsForm.cs](src/TuroClawProwl.App/SettingsForm.cs) for the pattern.
 - **`Application` namespace collision**: `using TuroClawProwl.Application` shadows `System.Windows.Forms.Application`. Use `using WinFormsApp = System.Windows.Forms.Application;` in any `.App` file that needs both.
-- **SKILL.md itself is excluded from the sync set** — user-curated, manual push only. Don't add it to `TodaySkillParser`'s output.
-- **A file that's both uncommitted and unpushed is classified as uncommitted only** in the tooltip — commit is the primary blocker and `PushTodayFilesUseCase` (Option X) commits then pushes in one flow.
 - **Smart App Control (SAC)** on the user's machine can block locally-built unsigned exes. It's a user-environment issue, not a build issue — don't "fix" it by disabling warnings.
 
 ## Sensitive data
@@ -68,7 +66,7 @@ The gateway auth token is stored under **DPAPI** (`DpapiTokenStore`), **not** in
 
 ## Config
 
-`%APPDATA%\TuroClawProwl\config.json` holds `GatewayUrl`, `SshHost`, `SshUser`, `PollInterval`, `AutostartEnabled`, `TodaySkillPath`, `TodayCcaRoot`, `TodayCrmIndexPath`. Token is separate (DPAPI). If you add a field, update:
+`%APPDATA%\TuroClawProwl\config.json` holds `GatewayUrl`, `SshHost`, `SshUser`, `PollInterval`, `AutostartEnabled`, `TodayCcaRoot` (fallback for `HubRepoPath`), `HubRepoPath`, `BundleWorktreePath`, `BundlePublishBranch`, `SnapshotInterval`, `HeartbeatInterval`, `GwsExecutablePath`, `GitExecutablePath`. Removed keys (`TodaySkillPath`, `TodayCrmIndexPath`) in an existing file are ignored on load and dropped on the next save. Token is separate (DPAPI). If you add a field, update:
 
 1. [TuroClawProwlConfig.cs](src/TuroClawProwl.Application/TuroClawProwlConfig.cs)
 2. [JsonConfigStore.cs](src/TuroClawProwl.Infrastructure/Configuration/JsonConfigStore.cs)

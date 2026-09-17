@@ -28,9 +28,7 @@ public sealed class SettingsForm : Form
     private readonly TextBox _sshUser = new() { Dock = DockStyle.Fill };
     private readonly NumericUpDown _pollSeconds = new() { Minimum = 5, Maximum = 600, Value = 15, Width = 70 };
     private readonly CheckBox _autostartEnabled = new() { Text = "Start with Windows", AutoSize = true };
-    private readonly TextBox _todaySkillPath = new() { Dock = DockStyle.Fill };
     private readonly TextBox _todayCcaRoot = new() { Dock = DockStyle.Fill };
-    private readonly TextBox _todayCrmIndex = new() { Dock = DockStyle.Fill };
     private readonly TextBox _hubRepoPath = new() { Dock = DockStyle.Fill };
     private readonly TextBox _bundleWorktreePath = new() { Dock = DockStyle.Fill };
     private readonly TextBox _bundlePublishBranch = new() { Dock = DockStyle.Fill };
@@ -192,9 +190,7 @@ public sealed class SettingsForm : Form
         var group = NewGroupBox("Today repo files");
         var grid = NewFieldGrid();
 
-        AddField(grid, "SKILL.md:", _todaySkillPath);
         AddField(grid, "CCA_ROOT:", _todayCcaRoot);
-        AddField(grid, "CRM index:", _todayCrmIndex);
 
         group.Controls.Add(grid);
         return group;
@@ -293,9 +289,7 @@ public sealed class SettingsForm : Form
         _sshUser.Text = config.SshUser;
         _pollSeconds.Value = Math.Clamp((decimal)config.PollInterval.TotalSeconds, 5, 600);
         _autostartEnabled.Checked = _autostart.IsEnabled();
-        _todaySkillPath.Text = config.TodaySkillPath;
         _todayCcaRoot.Text = config.TodayCcaRoot;
-        _todayCrmIndex.Text = config.TodayCrmIndexPath;
         _hubRepoPath.Text = config.HubRepoPath;
         _bundleWorktreePath.Text = config.BundleWorktreePath;
         _bundlePublishBranch.Text = config.BundlePublishBranch;
@@ -407,9 +401,7 @@ public sealed class SettingsForm : Form
             SshUser = _sshUser.Text.Trim(),
             PollInterval = TimeSpan.FromSeconds((double)_pollSeconds.Value),
             AutostartEnabled = _autostartEnabled.Checked,
-            TodaySkillPath = _todaySkillPath.Text.Trim(),
             TodayCcaRoot = _todayCcaRoot.Text.Trim(),
-            TodayCrmIndexPath = _todayCrmIndex.Text.Trim(),
             HubRepoPath = _hubRepoPath.Text.Trim(),
             BundleWorktreePath = _bundleWorktreePath.Text.Trim(),
             BundlePublishBranch = string.IsNullOrWhiteSpace(_bundlePublishBranch.Text)

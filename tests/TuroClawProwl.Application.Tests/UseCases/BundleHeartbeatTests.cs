@@ -29,7 +29,6 @@ public class BundleHeartbeatTests
         """;
 
     private readonly Mock<ISourceFileReader> _files = new(MockBehavior.Strict);
-    private readonly Mock<IGitFileFactsReader> _gitFacts = new(MockBehavior.Strict);
     private readonly Mock<IGoogleWorkspaceReader> _google = new(MockBehavior.Strict);
     private readonly Mock<ISnapshotStore> _snapshots = new(MockBehavior.Strict);
     private readonly Mock<IBundlePublisher> _publisher = new(MockBehavior.Strict);
@@ -47,18 +46,12 @@ public class BundleHeartbeatTests
             .Callback<BundlePayload, CancellationToken>((p, _) => _payloads.Add(p))
             .ReturnsAsync(() => new BundlePublishResult.Success("abc1234", _committedFileCount));
 
-        _gitFacts.Setup(g => g.GetFileFactsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(GitFileFacts.Untracked());
-
         _snapshots.Setup(s => s.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new SnapshotReadResult.NotFound());
         _snapshots.Setup(s => s.SaveAsync(It.IsAny<StoredSnapshot>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         SetUpFile(BundleLayout.RegistryRelativePath, Registry);
-        SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts");
-        SetUpFile(BundleLayout.WeeklyRelativePath(Now.ToLocalTime()), "# Week");
-        SetUpFile("CCA-YNE/STATE.md", "# YNE state");
 
         _google.Setup(g => g.ReadTaskListAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new GoogleReadResult.Success("{\"items\":[]}"));
@@ -75,7 +68,7 @@ public class BundleHeartbeatTests
             .ReturnsAsync(new SourceReadResult.Found(content, Now.AddMinutes(-5)));
 
     private PublishStateBundleUseCase CreateUseCase() =>
-        new(_files.Object, _gitFacts.Object, _google.Object, _snapshots.Object,
+        new(_files.Object, _google.Object, _snapshots.Object,
             _publisher.Object, _clock);
 
     private static StateBundleRequest Request() =>

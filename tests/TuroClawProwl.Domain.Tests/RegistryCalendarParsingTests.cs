@@ -59,6 +59,40 @@ public class RegistryCalendarParsingTests
     }
 
     [Fact]
+    public void A_calendar_marked_pending_is_excluded()
+    {
+        var registry = """
+            ### Calendars
+
+            | Calendar | Branch | ID | Use |
+            |----------|--------|----|----|
+            | Primary | professional | `michael.ahs@gmail.com` | Work + general |
+            | Yne | professional | `michael@yne.no` | **The Head of AI work calendar.** Added 2026-09-16 · **Pending** — not yet readable (see note below) |
+            | Holidays in Norway | both | `en.norwegian#holiday@group.v.calendar.google.com` | Context only — not actions |
+            """;
+
+        var calendars = RegistryParser.ParseCalendars(registry);
+
+        calendars.Should().ContainSingle().Which.CalendarId.Should().Be("michael.ahs@gmail.com");
+    }
+
+    [Theory]
+    [InlineData("pending")]
+    [InlineData("PENDING — admin to share")]
+    public void The_pending_marker_is_matched_case_insensitively(string use)
+    {
+        var registry = $"""
+            ### Calendars
+
+            | Calendar | Branch | ID | Use |
+            |----------|--------|----|----|
+            | Yne | professional | `michael@yne.no` | {use} |
+            """;
+
+        RegistryParser.ParseCalendars(registry).Should().BeEmpty();
+    }
+
+    [Fact]
     public void The_task_list_table_is_not_mistaken_for_a_calendar()
     {
         var calendars = RegistryParser.ParseCalendars(LiveRegistry);
