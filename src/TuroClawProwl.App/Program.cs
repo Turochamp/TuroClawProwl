@@ -126,7 +126,6 @@ internal static class Program
 
         var publishBundleUseCase = new PublishStateBundleUseCase(
             new FileSystemSourceFileReader(),
-            new GitFileFactsReader(gitExecutablePath),
             googleReader,
             new JsonFileSnapshotStore(JsonFileSnapshotStore.DefaultDirectory()),
             bundlePublisher,

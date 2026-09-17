@@ -8,7 +8,6 @@ namespace TuroClawProwl.Application.UseCases;
 public sealed class PublishStateBundleUseCase
 {
     private readonly ISourceFileReader _files;
-    private readonly IGitFileFactsReader _gitFacts;
     private readonly IGoogleWorkspaceReader _google;
     private readonly ISnapshotStore _snapshots;
     private readonly IBundlePublisher _publisher;
@@ -19,7 +18,6 @@ public sealed class PublishStateBundleUseCase
 
     public PublishStateBundleUseCase(
         ISourceFileReader files,
-        IGitFileFactsReader gitFacts,
         IGoogleWorkspaceReader google,
         ISnapshotStore snapshots,
         IBundlePublisher publisher,
@@ -27,14 +25,12 @@ public sealed class PublishStateBundleUseCase
         ILogger<PublishStateBundleUseCase>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(files);
-        ArgumentNullException.ThrowIfNull(gitFacts);
         ArgumentNullException.ThrowIfNull(google);
         ArgumentNullException.ThrowIfNull(snapshots);
         ArgumentNullException.ThrowIfNull(publisher);
         ArgumentNullException.ThrowIfNull(clock);
 
         _files = files;
-        _gitFacts = gitFacts;
         _google = google;
         _snapshots = snapshots;
         _publisher = publisher;
@@ -49,37 +45,12 @@ public sealed class PublishStateBundleUseCase
         ArgumentNullException.ThrowIfNull(request);
 
         var now = _clock.UtcNow;
-        // The hub names week files by local ISO week, so resolve the week locally.
+        // The calendar window is a local-day window, so resolve the day locally.
         var localNow = now.ToLocalTime();
 
         var sourceBranch = await _publisher.GetSourceBranchAsync(cancellationToken).ConfigureAwait(false);
 
         var collected = new Collected();
-
-        var fixedSources = BundleSourcePlan.FixedSources(localNow);
-        string? registry = null;
-
-        foreach (var item in fixedSources)
-        {
-            var content = await CollectAsync(
-                request.HubRepoPath, item, collected, cancellationToken).ConfigureAwait(false);
-
-            if (item.Id == BundleLayout.RegistrySourceId)
-                registry = content;
-        }
-
-        if (registry is not null)
-        {
-            foreach (var item in BundleSourcePlan.FromRegistry(registry))
-            {
-                await CollectAsync(
-                    request.HubRepoPath, item, collected, cancellationToken).ConfigureAwait(false);
-            }
-        }
-
-        var calendars = registry is null
-            ? Array.Empty<RegistryCalendar>()
-            : RegistryParser.ParseCalendars(registry);
 
         foreach (var list in GoogleSnapshotPlan.TaskLists())
         {
@@ -91,8 +62,8 @@ public sealed class PublishStateBundleUseCase
         }
 
         var window = GoogleSnapshotPlan.WindowFor(localNow);
-        var calendarRead = await _google
-            .ReadCalendarWindowAsync(calendars, window, cancellationToken).ConfigureAwait(false);
+        var calendarRead = await ReadCalendarWindowAsync(request.HubRepoPath, window, cancellationToken)
+            .ConfigureAwait(false);
         await CollectSnapshotAsync(
             GoogleSnapshotPlan.CalendarWindowSourceId,
             GoogleSnapshotPlan.CalendarWindowApiPath,
@@ -140,48 +111,37 @@ public sealed class PublishStateBundleUseCase
         return published;
     }
 
-    private async Task<string?> CollectAsync(
+    // The registry is not published; it only names the calendars to read. Without
+    // it the calendar set is unknown, and reading none would publish an empty
+    // window stamped as freshly verified, so the window fails and is retained.
+    private async Task<GoogleReadResult> ReadCalendarWindowAsync(
         string hubRepoPath,
-        BundleSourcePlanItem item,
-        Collected collected,
+        CalendarWindow window,
         CancellationToken cancellationToken)
     {
-        var absolute = Path.Combine(
+        var registryPath = Path.Combine(
             hubRepoPath,
-            item.SourceRelativePath.Replace('/', Path.DirectorySeparatorChar));
+            BundleLayout.RegistryRelativePath.Replace('/', Path.DirectorySeparatorChar));
 
-        var read = await _files.ReadAsync(absolute, cancellationToken).ConfigureAwait(false);
-        if (read is not SourceReadResult.Found found)
+        var read = await _files.ReadAsync(registryPath, cancellationToken).ConfigureAwait(false);
+        if (read is SourceReadResult.Found found)
         {
-            var reason = read switch
-            {
-                SourceReadResult.Missing => "missing",
-                SourceReadResult.Unreadable u => u.Error,
-                _ => throw new ArgumentException(
-                    $"Unknown source read result variant: {read.GetType().Name}", nameof(item)),
-            };
-
-            collected.Failures.Add(new BundleFailure(item.Id, reason));
-            _logger.LogWarning(
-                "State bundle source {Id} unavailable at {Path}: {Reason}", item.Id, absolute, reason);
-            return null;
+            var calendars = RegistryParser.ParseCalendars(found.Content);
+            return await _google.ReadCalendarWindowAsync(calendars, window, cancellationToken)
+                .ConfigureAwait(false);
         }
 
-        var facts = await _gitFacts.GetFileFactsAsync(absolute, cancellationToken).ConfigureAwait(false);
+        var reason = read switch
+        {
+            SourceReadResult.Missing => "missing",
+            SourceReadResult.Unreadable u => u.Error,
+            _ => throw new ArgumentException(
+                $"Unknown source read result variant: {read.GetType().Name}", nameof(hubRepoPath)),
+        };
 
-        collected.Files.Add(new BundleFile(item.BundleRelativePath, found.Content));
-        collected.Sources.Add(new BundleSource(
-            Id: item.Id,
-            Path: item.SourceRelativePath,
-            BundlePath: item.BundleRelativePath,
-            Modified: found.LastModified,
-            // A file source is confirmed current by the act of reading it, so the
-            // two timestamps are the same value and the renderer needs no branch.
-            Verified: found.LastModified,
-            Committed: facts.LastCommitAuthorDate,
-            Dirty: facts.Dirty));
-
-        return found.Content;
+        _logger.LogWarning(
+            "Hub registry unavailable at {Path}; calendar window not read: {Reason}", registryPath, reason);
+        return new GoogleReadResult.Failure("hub registry unavailable: " + reason);
     }
 
     private async Task CollectSnapshotAsync(
