@@ -122,8 +122,6 @@ public sealed class LiveConfigApplier : IDisposable
                         ConfigIntervals.EffectiveHeartbeatInterval(newConfig),
                         cancellationToken)
                     .ConfigureAwait(false);
-                await _orchestrator.SetTrackedFilesAsync(
-                    TodayPathsResolver.ToOrchestratorPairs(newPaths)).ConfigureAwait(false);
                 changes.Add("bundleSources");
             }
 

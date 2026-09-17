@@ -13,6 +13,8 @@ public class PublishStateBundleUseCaseTests
 
     private static readonly DateTimeOffset Now = new(2026, 9, 12, 6, 30, 0, TimeSpan.Zero);
 
+    private static readonly string[] PublishedSourceIds = ["tasks/yne", "tasks/my-tasks", "calendar/window"];
+
     private const string Registry = """
         ## Active set
 
@@ -21,133 +23,153 @@ public class PublishStateBundleUseCaseTests
         | YNE | professional | weekly | active | CCA-YNE/STATE.md |
         | SmoEms | professional | weekly | flagged | CCA-SmoEms/STATE.md |
 
-        ## Quiet (kept on disk, excluded from all roll-ups)
+        ### Calendars
 
-        | CCA | Reason |
-        |-----|--------|
-        | ChromeBookmarks | Utility, not goal-bearing |
+        | Calendar | Branch | ID | Use |
+        |----------|--------|----|----|
+        | Primary | professional | `michael.ahs@gmail.com` | Work + general |
+        | Yne | professional | `michael@yne.no` | **The Head of AI work calendar.** Added 2026-09-16 · **Pending** — not yet readable (see note below) |
+        | Holidays in Norway | both | `en.norwegian#holiday@group.v.calendar.google.com` | Context only — not actions |
         """;
 
     private readonly Mock<ISourceFileReader> _files = new(MockBehavior.Strict);
-    private readonly Mock<IGitFileFactsReader> _gitFacts = new(MockBehavior.Strict);
     private readonly Mock<IGoogleWorkspaceReader> _google = new(MockBehavior.Strict);
     private readonly Mock<ISnapshotStore> _snapshots = new(MockBehavior.Strict);
     private readonly Mock<IBundlePublisher> _publisher = new(MockBehavior.Strict);
     private readonly FixedClock _clock = new(Now);
 
     private BundlePayload? _captured;
+    private IReadOnlyList<RegistryCalendar>? _calendarsRead;
 
     public PublishStateBundleUseCaseTests()
     {
-        SetUpNoSnapshots();
-    }
+        _publisher.Setup(p => p.GetSourceBranchAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync("feature/humanize-design");
+        _publisher.Setup(p => p.PublishAsync(It.IsAny<BundlePayload>(), It.IsAny<CancellationToken>()))
+            .Callback<BundlePayload, CancellationToken>((p, _) => _captured = p)
+            .ReturnsAsync(new BundlePublishResult.Success("abc1234", 4));
 
-    private void SetUpNoSnapshots()
-    {
-        _google.Setup(g => g.ReadTaskListAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new GoogleReadResult.Failure("snapshots disabled in this test"));
-        _google.Setup(g => g.ReadCalendarWindowAsync(
-                It.IsAny<IReadOnlyList<RegistryCalendar>>(), It.IsAny<CalendarWindow>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new GoogleReadResult.Failure("snapshots disabled in this test"));
         _snapshots.Setup(s => s.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new SnapshotReadResult.NotFound());
+        _snapshots.Setup(s => s.SaveAsync(It.IsAny<StoredSnapshot>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _google.Setup(g => g.ReadTaskListAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleReadResult.Success("{\"items\":[]}"));
+        _google.Setup(g => g.ReadCalendarWindowAsync(
+                It.IsAny<IReadOnlyList<RegistryCalendar>>(), It.IsAny<CalendarWindow>(), It.IsAny<CancellationToken>()))
+            .Callback<IReadOnlyList<RegistryCalendar>, CalendarWindow, CancellationToken>(
+                (c, _, _) => _calendarsRead = c)
+            .ReturnsAsync(new GoogleReadResult.Success("{\"calendars\":[]}"));
+
+        SetUpRegistry(new SourceReadResult.Found(Registry, Now.AddMinutes(-10)));
     }
 
     private PublishStateBundleUseCase CreateUseCase() =>
-        new(_files.Object, _gitFacts.Object, _google.Object, _snapshots.Object,
-            _publisher.Object, _clock);
+        new(_files.Object, _google.Object, _snapshots.Object, _publisher.Object, _clock);
 
-    private static string Abs(string relative) =>
-        Path.Combine(HubRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+    private static StateBundleRequest Request() =>
+        new(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6));
 
-    private void SetUpFile(string relative, string content, DateTimeOffset modified) =>
-        _files.Setup(f => f.ReadAsync(Abs(relative), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SourceReadResult.Found(content, modified));
+    private static string RegistryPath =>
+        Path.Combine(HubRoot, BundleLayout.RegistryRelativePath.Replace('/', Path.DirectorySeparatorChar));
 
-    private void SetUpCleanTrackedFacts() =>
-        _gitFacts.Setup(g => g.GetFileFactsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new GitFileFacts(
-                InRepository: true, Tracked: true, Dirty: false,
-                LastCommitAuthorDate: Now.AddDays(-1)));
+    private void SetUpRegistry(SourceReadResult read) =>
+        _files.Setup(f => f.ReadAsync(RegistryPath, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(read);
 
-    private void SetUpPublisher(string branch)
+    private void FailAllGoogleReads()
     {
-        _publisher.Setup(p => p.GetSourceBranchAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(branch);
-        _publisher.Setup(p => p.PublishAsync(It.IsAny<BundlePayload>(), It.IsAny<CancellationToken>()))
-            .Callback<BundlePayload, CancellationToken>((p, _) => _captured = p)
-            .ReturnsAsync(new BundlePublishResult.Success("abc1234", 5));
-    }
-
-    private void SetUpFullHappyPath()
-    {
-        SetUpPublisher("feature/humanize-design");
-        SetUpCleanTrackedFacts();
-        SetUpFile(BundleLayout.RegistryRelativePath, Registry, Now.AddMinutes(-10));
-        SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts", Now.AddHours(-3));
-        SetUpFile(BundleLayout.WeeklyRelativePath(Now.ToLocalTime()), "# Week", Now.AddDays(-2));
-        SetUpFile("CCA-YNE/STATE.md", "# YNE state", Now.AddHours(-1));
-        SetUpFile("CCA-SmoEms/STATE.md", "# SmoEms state", Now.AddHours(-5));
+        _google.Setup(g => g.ReadTaskListAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleReadResult.Failure("offline"));
+        _google.Setup(g => g.ReadCalendarWindowAsync(
+                It.IsAny<IReadOnlyList<RegistryCalendar>>(), It.IsAny<CalendarWindow>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleReadResult.Failure("offline"));
     }
 
     [Fact]
-    public async Task Active_and_flagged_cca_state_files_are_collected_from_the_registry()
+    public async Task The_manifest_sources_are_exactly_the_two_task_lists_and_the_calendar_window()
     {
-        SetUpFullHappyPath();
+        await CreateUseCase().ExecuteAsync(Request());
 
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
+        _captured!.Manifest.Sources.Select(s => s.Id)
+            .Should().BeEquivalentTo(PublishedSourceIds, o => o.WithStrictOrdering());
+    }
 
-        _captured.Should().NotBeNull();
-        _captured!.Files.Select(f => f.RelativePath).Should().Contain(new[]
+    [Fact]
+    public async Task No_hub_file_is_published_into_the_bundle()
+    {
+        await CreateUseCase().ExecuteAsync(Request());
+
+        _captured!.Files.Select(f => f.RelativePath).Should().BeEquivalentTo(new[]
         {
-            "cca/YNE.STATE.md",
-            "cca/SmoEms.STATE.md",
+            "tasks/yne.json", "tasks/my-tasks.json", "calendar/window.json",
         });
     }
 
     [Fact]
-    public async Task A_quiet_cca_is_not_collected()
+    public async Task Failures_never_name_a_file_source_even_when_every_read_fails()
     {
-        SetUpFullHappyPath();
+        FailAllGoogleReads();
+        SetUpRegistry(new SourceReadResult.Missing());
 
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
+        await CreateUseCase().ExecuteAsync(Request());
 
-        _captured!.Files.Should().NotContain(f => f.RelativePath.Contains("ChromeBookmarks", StringComparison.Ordinal));
-        _captured!.Manifest.Sources.Should().NotContain(s => s.Id.Contains("ChromeBookmarks", StringComparison.Ordinal));
+        _captured!.Manifest.Failures.Select(f => f.Id)
+            .Should().OnlyContain(id => PublishedSourceIds.Contains(id));
+        _captured!.Manifest.Sources.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task Registry_crm_index_and_this_weeks_week_file_are_collected()
+    public async Task The_registry_is_read_only_to_choose_the_calendars()
     {
-        SetUpFullHappyPath();
+        await CreateUseCase().ExecuteAsync(Request());
 
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
-
-        _captured!.Files.Select(f => f.RelativePath).Should().Contain(new[]
-        {
-            BundleLayout.RegistryBundlePath,
-            BundleLayout.CrmIndexBundlePath,
-            BundleLayout.WeeklyBundlePath(Now.ToLocalTime()),
-        });
+        _files.Verify(f => f.ReadAsync(RegistryPath, It.IsAny<CancellationToken>()), Times.Once);
+        _files.VerifyNoOtherCalls();
+        _calendarsRead.Should().ContainSingle().Which.CalendarId.Should().Be("michael.ahs@gmail.com");
     }
 
     [Fact]
-    public async Task The_collected_content_is_what_the_reader_returned()
+    public async Task A_missing_registry_fails_the_calendar_window_instead_of_publishing_an_empty_one()
     {
-        SetUpFullHappyPath();
+        SetUpRegistry(new SourceReadResult.Missing());
 
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
+        var result = await CreateUseCase().ExecuteAsync(Request());
 
-        _captured!.Files.Single(f => f.RelativePath == "cca/YNE.STATE.md").Content
-            .Should().Be("# YNE state");
+        result.Should().BeOfType<BundlePublishResult.Success>();
+        _google.Verify(g => g.ReadCalendarWindowAsync(
+                It.IsAny<IReadOnlyList<RegistryCalendar>>(), It.IsAny<CalendarWindow>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        var failure = _captured!.Manifest.Failures.Should().ContainSingle().Subject;
+        failure.Id.Should().Be("calendar/window");
+        failure.Reason.Should().Contain("registry").And.Contain("missing");
+        _captured!.Manifest.Sources.Select(s => s.Id).Should().BeEquivalentTo("tasks/yne", "tasks/my-tasks");
+    }
+
+    [Fact]
+    public async Task An_unreadable_registry_retains_the_previous_calendar_window_with_its_timestamps()
+    {
+        SetUpRegistry(new SourceReadResult.Unreadable("The process cannot access the file"));
+        _snapshots.Setup(s => s.GetAsync("calendar/window", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SnapshotReadResult.Found(new StoredSnapshot(
+                "calendar/window", "{\"calendars\":[1]}", Now.AddHours(-9), Now.AddHours(-1))));
+
+        await CreateUseCase().ExecuteAsync(Request());
+
+        _captured!.Manifest.Failures.Should().ContainSingle(f => f.Id == "calendar/window")
+            .Which.Reason.Should().Contain("The process cannot access the file");
+        var window = _captured!.Manifest.Sources.Single(s => s.Id == "calendar/window");
+        window.Modified.Should().Be(Now.AddHours(-9));
+        window.Verified.Should().Be(Now.AddHours(-1));
+        _captured!.Files.Single(f => f.RelativePath == "calendar/window.json").Content
+            .Should().Be("{\"calendars\":[1]}");
     }
 
     [Fact]
     public async Task The_manifest_records_the_schema_version_published_at_publisher_and_source_branch()
     {
-        SetUpFullHappyPath();
-
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
+        await CreateUseCase().ExecuteAsync(Request());
 
         _captured!.Manifest.SchemaVersion.Should().Be(BundleManifest.CurrentSchemaVersion);
         _captured!.Manifest.PublishedAt.Should().Be(Now);
@@ -156,70 +178,18 @@ public class PublishStateBundleUseCaseTests
     }
 
     [Fact]
-    public async Task Every_collected_source_gets_a_manifest_entry_with_its_repo_relative_path()
-    {
-        SetUpFullHappyPath();
-
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
-
-        _captured!.Manifest.Sources.Should().HaveCount(5);
-        _captured!.Manifest.Failures.Should()
-            .OnlyContain(f => f.Id.StartsWith("tasks/") || f.Id.StartsWith("calendar/"));
-        _captured!.Manifest.Sources.Single(s => s.Id == "cca/YNE").Path
-            .Should().Be("CCA-YNE/STATE.md");
-        _captured!.Manifest.Sources.Single(s => s.Id == "registry").Modified
-            .Should().Be(Now.AddMinutes(-10));
-        _captured!.Manifest.Sources.Single(s => s.Id == "registry").Committed
-            .Should().Be(Now.AddDays(-1));
-    }
-
-    [Fact]
-    public async Task Every_manifest_source_states_the_bundle_path_its_file_was_written_to()
-    {
-        SetUpFullHappyPath();
-
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
-
-        _captured!.Manifest.Sources.Single(s => s.Id == "registry").BundlePath
-            .Should().Be("registry.md");
-        _captured!.Manifest.Sources.Single(s => s.Id == "crm-index").BundlePath
-            .Should().Be("crm-index.md");
-        _captured!.Manifest.Sources.Single(s => s.Id == "cca/YNE").BundlePath
-            .Should().Be("cca/YNE.STATE.md");
-        _captured!.Manifest.Sources
-            .Single(s => s.Id == BundleLayout.WeeklySourceId(Now.ToLocalTime())).BundlePath
-            .Should().Be(BundleLayout.WeeklyBundlePath(Now.ToLocalTime()));
-    }
-
-    [Fact]
     public async Task Every_manifest_source_bundle_path_matches_a_file_actually_in_the_payload()
     {
-        SetUpFullHappyPath();
-
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
+        await CreateUseCase().ExecuteAsync(Request());
 
         var payloadPaths = _captured!.Files.Select(f => f.RelativePath).ToArray();
         _captured!.Manifest.Sources.Select(s => s.BundlePath).Should().BeEquivalentTo(payloadPaths);
     }
 
     [Fact]
-    public async Task A_file_source_carries_the_same_value_for_modified_and_verified()
-    {
-        SetUpFullHappyPath();
-
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
-
-        _captured!.Manifest.Sources.Should().AllSatisfy(s => s.Verified.Should().Be(s.Modified));
-        _captured!.Manifest.Sources.Single(s => s.Id == "cca/YNE").Verified
-            .Should().Be(Now.AddHours(-1));
-    }
-
-    [Fact]
     public async Task The_publisher_result_is_returned_unchanged()
     {
-        SetUpFullHappyPath();
-
-        var result = await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
+        var result = await CreateUseCase().ExecuteAsync(Request());
 
         result.Should().BeOfType<BundlePublishResult.Success>()
             .Which.CommitSha.Should().Be("abc1234");
@@ -233,128 +203,5 @@ public class PublishStateBundleUseCaseTests
         Func<Task> act = () => useCase.ExecuteAsync(null!);
 
         await act.Should().ThrowAsync<ArgumentNullException>();
-    }
-
-    [Fact]
-    public async Task A_missing_cca_state_file_is_recorded_and_every_other_source_still_publishes()
-    {
-        SetUpPublisher("main");
-        SetUpCleanTrackedFacts();
-        SetUpFile(BundleLayout.RegistryRelativePath, Registry, Now.AddMinutes(-10));
-        SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts", Now.AddHours(-3));
-        SetUpFile(BundleLayout.WeeklyRelativePath(Now.ToLocalTime()), "# Week", Now.AddDays(-2));
-        SetUpFile("CCA-YNE/STATE.md", "# YNE state", Now.AddHours(-1));
-        _files.Setup(f => f.ReadAsync(Abs("CCA-SmoEms/STATE.md"), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SourceReadResult.Missing());
-
-        var result = await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
-
-        result.Should().BeOfType<BundlePublishResult.Success>();
-        _captured!.Manifest.Failures.Should().ContainSingle(f => f.Id == "cca/SmoEms")
-            .Which.Should().BeEquivalentTo(new BundleFailure("cca/SmoEms", "missing"));
-        _captured!.Manifest.Sources.Select(s => s.Id).Should().Contain("cca/YNE");
-        _captured!.Files.Should().NotContain(f => f.RelativePath == "cca/SmoEms.STATE.md");
-    }
-
-    [Fact]
-    public async Task An_unreadable_source_records_its_error_as_the_failure_reason()
-    {
-        SetUpPublisher("main");
-        SetUpCleanTrackedFacts();
-        SetUpFile(BundleLayout.RegistryRelativePath, Registry, Now.AddMinutes(-10));
-        SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts", Now.AddHours(-3));
-        SetUpFile(BundleLayout.WeeklyRelativePath(Now.ToLocalTime()), "# Week", Now.AddDays(-2));
-        SetUpFile("CCA-SmoEms/STATE.md", "# SmoEms state", Now.AddHours(-5));
-        _files.Setup(f => f.ReadAsync(Abs("CCA-YNE/STATE.md"), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SourceReadResult.Unreadable("The process cannot access the file"));
-
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
-
-        _captured!.Manifest.Failures.Should().ContainSingle(f => f.Id == "cca/YNE")
-            .Which.Reason.Should().Be("The process cannot access the file");
-    }
-
-    [Fact]
-    public async Task An_unreadable_registry_does_not_abort_the_bundle()
-    {
-        SetUpPublisher("main");
-        SetUpCleanTrackedFacts();
-        _files.Setup(f => f.ReadAsync(Abs(BundleLayout.RegistryRelativePath), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SourceReadResult.Missing());
-        SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts", Now.AddHours(-3));
-        SetUpFile(BundleLayout.WeeklyRelativePath(Now.ToLocalTime()), "# Week", Now.AddDays(-2));
-
-        var result = await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
-
-        result.Should().BeOfType<BundlePublishResult.Success>();
-        _captured!.Manifest.Failures.Should().ContainSingle(f => f.Id == "registry");
-        _captured!.Files.Select(f => f.RelativePath).Should().Contain(BundleLayout.CrmIndexBundlePath);
-    }
-
-    [Fact]
-    public async Task A_source_outside_any_repository_publishes_with_a_null_committed_date()
-    {
-        SetUpPublisher("main");
-        SetUpFile(BundleLayout.RegistryRelativePath, Registry, Now.AddMinutes(-10));
-        SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts", Now.AddHours(-3));
-        SetUpFile(BundleLayout.WeeklyRelativePath(Now.ToLocalTime()), "# Week", Now.AddDays(-2));
-        SetUpFile("CCA-YNE/STATE.md", "# YNE state", Now.AddHours(-1));
-        SetUpFile("CCA-SmoEms/STATE.md", "# SmoEms state", Now.AddHours(-5));
-        _gitFacts.Setup(g => g.GetFileFactsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new GitFileFacts(
-                InRepository: true, Tracked: true, Dirty: false, LastCommitAuthorDate: Now.AddDays(-1)));
-        _gitFacts.Setup(g => g.GetFileFactsAsync(Abs("CCA-YNE/STATE.md"), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(GitFileFacts.OutsideRepository());
-
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
-
-        var yne = _captured!.Manifest.Sources.Single(s => s.Id == "cca/YNE");
-        yne.Committed.Should().BeNull();
-        yne.Dirty.Should().BeTrue();
-        _captured!.Files.Should().Contain(f => f.RelativePath == "cca/YNE.STATE.md");
-    }
-
-    [Fact]
-    public async Task An_untracked_source_publishes_with_a_null_committed_date()
-    {
-        SetUpPublisher("main");
-        SetUpFile(BundleLayout.RegistryRelativePath, Registry, Now.AddMinutes(-10));
-        SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts", Now.AddHours(-3));
-        SetUpFile(BundleLayout.WeeklyRelativePath(Now.ToLocalTime()), "# Week", Now.AddDays(-2));
-        SetUpFile("CCA-YNE/STATE.md", "# YNE state", Now.AddHours(-1));
-        SetUpFile("CCA-SmoEms/STATE.md", "# SmoEms state", Now.AddHours(-5));
-        _gitFacts.Setup(g => g.GetFileFactsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(GitFileFacts.Untracked());
-
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
-
-        _captured!.Manifest.Sources.Should().AllSatisfy(s =>
-        {
-            s.Committed.Should().BeNull();
-            s.Dirty.Should().BeTrue();
-        });
-    }
-
-    [Fact]
-    public async Task An_uncommitted_source_publishes_its_working_tree_content_and_is_marked_dirty()
-    {
-        SetUpPublisher("feature/humanize-design");
-        SetUpFile(BundleLayout.RegistryRelativePath, Registry, Now.AddMinutes(-10));
-        SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts", Now.AddHours(-3));
-        SetUpFile(BundleLayout.WeeklyRelativePath(Now.ToLocalTime()), "# Week", Now.AddDays(-2));
-        SetUpFile("CCA-YNE/STATE.md", "# YNE state — edited, not committed", Now.AddMinutes(-1));
-        SetUpFile("CCA-SmoEms/STATE.md", "# SmoEms state", Now.AddHours(-5));
-        _gitFacts.Setup(g => g.GetFileFactsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new GitFileFacts(
-                InRepository: true, Tracked: true, Dirty: true, LastCommitAuthorDate: Now.AddDays(-4)));
-
-        await CreateUseCase().ExecuteAsync(new StateBundleRequest(HubRoot, "TuroClawProwl/0.3.0", TimeSpan.FromHours(6)));
-
-        _captured!.Files.Single(f => f.RelativePath == "cca/YNE.STATE.md").Content
-            .Should().Be("# YNE state — edited, not committed");
-        var yne = _captured!.Manifest.Sources.Single(s => s.Id == "cca/YNE");
-        yne.Dirty.Should().BeTrue();
-        yne.Modified.Should().Be(Now.AddMinutes(-1));
-        yne.Committed.Should().Be(Now.AddDays(-4));
     }
 }

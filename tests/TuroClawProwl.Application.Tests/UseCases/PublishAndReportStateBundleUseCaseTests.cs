@@ -22,7 +22,6 @@ public class PublishAndReportStateBundleUseCaseTests
         """;
 
     private readonly Mock<ISourceFileReader> _files = new(MockBehavior.Strict);
-    private readonly Mock<IGitFileFactsReader> _gitFacts = new(MockBehavior.Strict);
     private readonly Mock<IGoogleWorkspaceReader> _google = new(MockBehavior.Strict);
     private readonly Mock<ISnapshotStore> _snapshots = new(MockBehavior.Strict);
     private readonly Mock<IBundlePublisher> _publisher = new(MockBehavior.Strict);
@@ -47,8 +46,6 @@ public class PublishAndReportStateBundleUseCaseTests
 
         _publisher.Setup(p => p.GetSourceBranchAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync("feature/humanize-design");
-        _gitFacts.Setup(g => g.GetFileFactsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(GitFileFacts.Untracked());
 
         // This class is about surfacing the publish outcome, not about snapshots,
         // so the Google reads fail and retain nothing.
@@ -61,9 +58,6 @@ public class PublishAndReportStateBundleUseCaseTests
             .ReturnsAsync(new SnapshotReadResult.NotFound());
 
         SetUpFile(BundleLayout.RegistryRelativePath, Registry);
-        SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts");
-        SetUpFile(BundleLayout.WeeklyRelativePath(Now.ToLocalTime()), "# Week");
-        SetUpFile("CCA-YNE/STATE.md", "# YNE state");
 
         _report = new ReportBundlePublishUseCase(_tray.Object, _toasts.Object, _clock);
     }
@@ -78,7 +72,7 @@ public class PublishAndReportStateBundleUseCaseTests
     private PublishAndReportStateBundleUseCase CreateUseCase() =>
         new(
             new PublishStateBundleUseCase(
-                _files.Object, _gitFacts.Object, _google.Object, _snapshots.Object,
+                _files.Object, _google.Object, _snapshots.Object,
                 _publisher.Object, _clock),
             _report);
 

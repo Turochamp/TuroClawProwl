@@ -37,7 +37,6 @@ public class PublishStateBundleSnapshotTests
         """;
 
     private readonly Mock<ISourceFileReader> _files = new(MockBehavior.Strict);
-    private readonly Mock<IGitFileFactsReader> _gitFacts = new(MockBehavior.Strict);
     private readonly Mock<IGoogleWorkspaceReader> _google = new(MockBehavior.Strict);
     private readonly Mock<ISnapshotStore> _snapshots = new(MockBehavior.Strict);
     private readonly Mock<IBundlePublisher> _publisher = new(MockBehavior.Strict);
@@ -55,9 +54,6 @@ public class PublishStateBundleSnapshotTests
             .Callback<BundlePayload, CancellationToken>((p, _) => _captured = p)
             .ReturnsAsync(new BundlePublishResult.Success("abc1234", 8));
 
-        _gitFacts.Setup(g => g.GetFileFactsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(GitFileFacts.Untracked());
-
         _snapshots.Setup(s => s.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new SnapshotReadResult.NotFound());
         _snapshots.Setup(s => s.SaveAsync(It.IsAny<StoredSnapshot>(), It.IsAny<CancellationToken>()))
@@ -65,9 +61,6 @@ public class PublishStateBundleSnapshotTests
             .Returns(Task.CompletedTask);
 
         SetUpFile(BundleLayout.RegistryRelativePath, Registry);
-        SetUpFile(BundleLayout.CrmIndexRelativePath, "# Contacts");
-        SetUpFile(BundleLayout.WeeklyRelativePath(Now.ToLocalTime()), "# Week");
-        SetUpFile("CCA-YNE/STATE.md", "# YNE state");
 
         _google.Setup(g => g.ReadTaskListAsync(GoogleSnapshotPlan.YneListId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new GoogleReadResult.Success("{\"items\":[{\"title\":\"Ring Eirik\"}]}"));
@@ -86,7 +79,7 @@ public class PublishStateBundleSnapshotTests
             .ReturnsAsync(new SourceReadResult.Found(content, Now.AddMinutes(-5)));
 
     private PublishStateBundleUseCase CreateUseCase() =>
-        new(_files.Object, _gitFacts.Object, _google.Object, _snapshots.Object,
+        new(_files.Object, _google.Object, _snapshots.Object,
             _publisher.Object, _clock);
 
     private static StateBundleRequest Request() =>
@@ -337,7 +330,7 @@ public class PublishStateBundleSnapshotTests
         result.Should().BeOfType<BundlePublishResult.Success>();
         _captured!.Files.Select(f => f.RelativePath).Should().Contain(new[]
         {
-            "tasks/my-tasks.json", "calendar/window.json", "registry.md",
+            "tasks/my-tasks.json", "calendar/window.json",
         });
     }
 
@@ -423,8 +416,11 @@ public class PublishStateBundleSnapshotTests
     }
 
     [Fact]
-    public async Task A_misconfigured_reader_still_publishes_every_reachable_source()
+    public async Task A_misconfigured_reader_still_publishes_every_retained_snapshot()
     {
+        _snapshots.Setup(s => s.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string id, CancellationToken _) => new SnapshotReadResult.Found(
+                new StoredSnapshot(id, "{}", Now.AddHours(-9), Now.AddHours(-1))));
         _google.Setup(g => g.ReadTaskListAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new GoogleReadResult.Misconfigured("gwsExecutablePath", "not found"));
         _google.Setup(g => g.ReadCalendarWindowAsync(
@@ -437,7 +433,7 @@ public class PublishStateBundleSnapshotTests
             p => p.PublishAsync(It.IsAny<BundlePayload>(), It.IsAny<CancellationToken>()), Times.Once);
         _captured!.Files.Select(f => f.RelativePath).Should().Contain(new[]
         {
-            "registry.md", "crm-index.md", "cca/YNE.STATE.md",
+            "tasks/yne.json", "tasks/my-tasks.json", "calendar/window.json",
         });
         _captured!.Manifest.Failures.Select(f => f.Id).Should().Contain(new[]
         {

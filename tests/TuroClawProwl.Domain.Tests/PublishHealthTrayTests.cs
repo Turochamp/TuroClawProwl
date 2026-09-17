@@ -78,7 +78,6 @@ public class PublishHealthTrayTests
     {
         var tooltip = TooltipComposer.Compose(
             HealthyGateway(),
-            Array.Empty<TodayFileStatus>(),
             new PublishHealth.Healthy(Now.AddHours(-2)),
             Now);
 
@@ -89,7 +88,7 @@ public class PublishHealthTrayTests
     public void Tooltip_names_the_setting_at_fault_for_a_misconfiguration()
     {
         var tooltip = TooltipComposer.Compose(
-            HealthyGateway(), Array.Empty<TodayFileStatus>(), Misconfigured(), Now);
+            HealthyGateway(), Misconfigured(), Now);
 
         tooltip.Should().Contain("bundlePublishBranch");
         tooltip.Should().Contain("misconfigured");
@@ -99,7 +98,7 @@ public class PublishHealthTrayTests
     public void Tooltip_marks_a_transient_failure_as_transient()
     {
         var tooltip = TooltipComposer.Compose(
-            HealthyGateway(), Array.Empty<TodayFileStatus>(), Transient(), Now);
+            HealthyGateway(), Transient(), Now);
 
         tooltip.Should().Contain("Bundle: publish failed");
         tooltip.Should().NotContain("misconfigured");
@@ -109,15 +108,23 @@ public class PublishHealthTrayTests
     public void Tooltip_says_so_when_nothing_has_been_published_yet()
     {
         var tooltip = TooltipComposer.Compose(
-            HealthyGateway(), Array.Empty<TodayFileStatus>(), new PublishHealth.NeverPublished(), Now);
+            HealthyGateway(), new PublishHealth.NeverPublished(), Now);
 
         tooltip.Should().Contain("Bundle: not published yet");
     }
 
     [Fact]
+    public void Null_gateway_health_is_rejected_by_the_resolver()
+    {
+        Action act = () => TrayColorResolver.Resolve(null!, new PublishHealth.NeverPublished());
+
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
     public void Null_publish_health_is_rejected_by_the_resolver()
     {
-        Action act = () => TrayColorResolver.Resolve(HealthyGateway(), (PublishHealth)null!);
+        Action act = () => TrayColorResolver.Resolve(HealthyGateway(), null!);
 
         act.Should().Throw<ArgumentNullException>();
     }
