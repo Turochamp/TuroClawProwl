@@ -68,7 +68,6 @@ internal static class Program
             ? new NullGatewayClient()
             : new HttpGatewayClient(httpClient, tokenStore, new Uri(config.GatewayUrl), retryPipeline);
 
-        var gitRunner = new GitProcessRunner();
         var sshRunner = new OpenSshRunner();
         var browserLauncher = new DefaultBrowserLauncher();
         var toasts = new ToastNotificationsToastService();
@@ -80,20 +79,14 @@ internal static class Program
         var healthUseCase = new HandleHealthPollUseCase(
             gatewayClient, clock, toasts, trayController,
             loggerFactory.CreateLogger<HandleHealthPollUseCase>());
-        var resolveTodayUseCase = new ResolveTodayFileStatusesUseCase(
-            gitRunner, trayController,
-            loggerFactory.CreateLogger<ResolveTodayFileStatusesUseCase>());
         var openControlUiUseCase = new OpenControlUiUseCase(
             new Uri(config.GatewayUrl), browserLauncher, tokenStore,
             loggerFactory.CreateLogger<OpenControlUiUseCase>());
         var restartUseCase = new RestartGatewayUseCase(sshTarget, sshRunner, toasts);
 
-        var trackedForOrchestrator = TodayPathsResolver.ToOrchestratorPairs(watchedPaths);
-
         using var orchestrator = new AppOrchestrator(
-            config, healthUseCase, resolveTodayUseCase,
+            config, healthUseCase,
             openControlUiUseCase, restartUseCase,
-            trackedForOrchestrator,
             loggerFactory.CreateLogger<AppOrchestrator>());
 
         var publisherVersion = "TuroClawProwl/" +
