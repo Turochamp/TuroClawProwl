@@ -1,9 +1,19 @@
 using System.Diagnostics;
+using System.Text;
 
 namespace TuroClawProwl.Infrastructure.Process;
 
 internal static class ProcessRunner
 {
+    // Without this, a redirected stream is decoded with Console.OutputEncoding -- the
+    // machine's console code page, cp1252 here. gws prints UTF-8, so every non-ASCII
+    // character was decoded as the wrong characters and then written back out as UTF-8:
+    // "Kurt pa fredag?" reached the bundle as "Kurt pA¥ fredag?", "o" as "A¸", "'" as
+    // "a€™". Every Norwegian and Swedish word in tasks and calendar was affected from
+    // the first publish. No BOM: these are pipes, not files, and a BOM would land in the
+    // first line of stdout and break every parser downstream.
+    private static readonly UTF8Encoding PipeEncoding = new(encoderShouldEmitUTF8Identifier: false);
+
     internal sealed record Result(int ExitCode, string StdOut, string StdErr);
 
     internal static async Task<Result> RunAsync(
@@ -64,6 +74,8 @@ internal static class ProcessRunner
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            StandardOutputEncoding = PipeEncoding,
+            StandardErrorEncoding = PipeEncoding,
             CreateNoWindow = true,
             WorkingDirectory = workingDirectory ?? string.Empty,
         };
